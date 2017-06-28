@@ -17,9 +17,11 @@ package io.netty.handler.codec.http;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelHandlerAppender;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelPipeline;
+import io.netty.channel.CombinedChannelDuplexHandler;
 import io.netty.handler.codec.PrematureChannelClosureException;
+import io.netty.util.ReferenceCountUtil;
 
 import java.util.ArrayDeque;
 import java.util.List;
@@ -40,10 +42,12 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * @see HttpServerCodec
  */
-public final class HttpClientCodec extends ChannelHandlerAppender implements HttpClientUpgradeHandler.SourceCodec {
+public final class HttpClientCodec extends CombinedChannelDuplexHandler<HttpResponseDecoder, HttpRequestEncoder>
+        implements HttpClientUpgradeHandler.SourceCodec {
 
     /** A queue that is used for correlating a request and a response. */
     private final Queue<HttpMethod> queue = new ArrayDeque<HttpMethod>();
+    private final boolean parseHttpAfterConnectRequest;
 
     /** If true, decoding stops (i.e. pass-through) */
     private boolean done;
@@ -81,9 +85,48 @@ public final class HttpClientCodec extends ChannelHandlerAppender implements Htt
     public HttpClientCodec(
             int maxInitialLineLength, int maxHeaderSize, int maxChunkSize, boolean failOnMissingResponse,
             boolean validateHeaders) {
-        add(new Decoder(maxInitialLineLength, maxHeaderSize, maxChunkSize, validateHeaders));
-        add(new Encoder());
+        this(maxInitialLineLength, maxHeaderSize, maxChunkSize, failOnMissingResponse, validateHeaders, false);
+    }
+
+    /**
+     * Creates a new instance with the specified decoder options.
+     */
+    public HttpClientCodec(
+            int maxInitialLineLength, int maxHeaderSize, int maxChunkSize, boolean failOnMissingResponse,
+            boolean validateHeaders, boolean parseHttpAfterConnectRequest) {
+        init(new Decoder(maxInitialLineLength, maxHeaderSize, maxChunkSize, validateHeaders), new Encoder());
         this.failOnMissingResponse = failOnMissingResponse;
+        this.parseHttpAfterConnectRequest = parseHttpAfterConnectRequest;
+    }
+
+    /**
+     * Creates a new instance with the specified decoder options.
+     */
+    public HttpClientCodec(
+            int maxInitialLineLength, int maxHeaderSize, int maxChunkSize, boolean failOnMissingResponse,
+            boolean validateHeaders, int initialBufferSize) {
+        this(maxInitialLineLength, maxHeaderSize, maxChunkSize, failOnMissingResponse, validateHeaders,
+                initialBufferSize, false);
+    }
+
+    /**
+     * Creates a new instance with the specified decoder options.
+     */
+    public HttpClientCodec(
+            int maxInitialLineLength, int maxHeaderSize, int maxChunkSize, boolean failOnMissingResponse,
+            boolean validateHeaders, int initialBufferSize, boolean parseHttpAfterConnectRequest) {
+        init(new Decoder(maxInitialLineLength, maxHeaderSize, maxChunkSize, validateHeaders, initialBufferSize),
+             new Encoder());
+        this.parseHttpAfterConnectRequest = parseHttpAfterConnectRequest;
+        this.failOnMissingResponse = failOnMissingResponse;
+    }
+
+    /**
+     * Prepares to upgrade to another protocol from HTTP. Disables the {@link Encoder}.
+     */
+    @Override
+    public void prepareUpgradeFrom(ChannelHandlerContext ctx) {
+        ((Encoder) outboundHandler()).upgraded = true;
     }
 
     /**
@@ -92,44 +135,38 @@ public final class HttpClientCodec extends ChannelHandlerAppender implements Htt
      */
     @Override
     public void upgradeFrom(ChannelHandlerContext ctx) {
-        ctx.pipeline().remove(Decoder.class);
-        ctx.pipeline().remove(Encoder.class);
-    }
-
-    /**
-     * Returns the encoder of this codec.
-     */
-    public HttpRequestEncoder encoder() {
-        return handlerAt(1);
-    }
-
-    /**
-     * Returns the decoder of this codec.
-     */
-    public HttpResponseDecoder decoder() {
-        return handlerAt(0);
+        final ChannelPipeline p = ctx.pipeline();
+        p.remove(this);
     }
 
     public void setSingleDecode(boolean singleDecode) {
-        decoder().setSingleDecode(singleDecode);
+        inboundHandler().setSingleDecode(singleDecode);
     }
 
     public boolean isSingleDecode() {
-        return decoder().isSingleDecode();
+        return inboundHandler().isSingleDecode();
     }
 
     private final class Encoder extends HttpRequestEncoder {
 
+        boolean upgraded;
+
         @Override
         protected void encode(
                 ChannelHandlerContext ctx, Object msg, List<Object> out) throws Exception {
+
+            if (upgraded) {
+                out.add(ReferenceCountUtil.retain(msg));
+                return;
+            }
+
             if (msg instanceof HttpRequest && !done) {
                 queue.offer(((HttpRequest) msg).method());
             }
 
             super.encode(ctx, msg, out);
 
-            if (failOnMissingResponse) {
+            if (failOnMissingResponse && !done) {
                 // check if the request is chunked if so do not increment
                 if (msg instanceof LastHttpContent) {
                     // increment as its the last chunk
@@ -142,6 +179,11 @@ public final class HttpClientCodec extends ChannelHandlerAppender implements Htt
     private final class Decoder extends HttpResponseDecoder {
         Decoder(int maxInitialLineLength, int maxHeaderSize, int maxChunkSize, boolean validateHeaders) {
             super(maxInitialLineLength, maxHeaderSize, maxChunkSize, validateHeaders);
+        }
+
+        Decoder(int maxInitialLineLength, int maxHeaderSize, int maxChunkSize, boolean validateHeaders,
+                int initialBufferSize) {
+            super(maxInitialLineLength, maxHeaderSize, maxChunkSize, validateHeaders, initialBufferSize);
         }
 
         @Override
@@ -218,9 +260,12 @@ public final class HttpClientCodec extends ChannelHandlerAppender implements Htt
                 // Successful CONNECT request results in a response with empty body.
                 if (statusCode == 200) {
                     if (HttpMethod.CONNECT.equals(method)) {
-                        // Proxy connection established - Not HTTP anymore.
-                        done = true;
-                        queue.clear();
+                        // Proxy connection established - Parse HTTP only if configured by parseHttpAfterConnectRequest,
+                        // else pass through.
+                        if (!parseHttpAfterConnectRequest) {
+                            done = true;
+                            queue.clear();
+                        }
                         return true;
                     }
                 }

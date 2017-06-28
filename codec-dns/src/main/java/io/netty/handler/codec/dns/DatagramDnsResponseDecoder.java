@@ -21,8 +21,8 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.socket.DatagramPacket;
 import io.netty.handler.codec.CorruptedFrameException;
 import io.netty.handler.codec.MessageToMessageDecoder;
+import io.netty.util.internal.UnstableApi;
 
-import java.net.InetSocketAddress;
 import java.util.List;
 
 import static io.netty.util.internal.ObjectUtil.checkNotNull;
@@ -30,6 +30,7 @@ import static io.netty.util.internal.ObjectUtil.checkNotNull;
 /**
  * Decodes a {@link DatagramPacket} into a {@link DatagramDnsResponse}.
  */
+@UnstableApi
 @ChannelHandler.Sharable
 public class DatagramDnsResponseDecoder extends MessageToMessageDecoder<DatagramPacket> {
 
@@ -51,10 +52,9 @@ public class DatagramDnsResponseDecoder extends MessageToMessageDecoder<Datagram
 
     @Override
     protected void decode(ChannelHandlerContext ctx, DatagramPacket packet, List<Object> out) throws Exception {
-        final InetSocketAddress sender = packet.sender();
         final ByteBuf buf = packet.content();
 
-        final DnsResponse response = newResponse(sender, buf);
+        final DnsResponse response = newResponse(packet, buf);
         boolean success = false;
         try {
             final int questionCount = buf.readUnsignedShort();
@@ -76,7 +76,7 @@ public class DatagramDnsResponseDecoder extends MessageToMessageDecoder<Datagram
         }
     }
 
-    private static DnsResponse newResponse(InetSocketAddress sender, ByteBuf buf) {
+    private static DnsResponse newResponse(DatagramPacket packet, ByteBuf buf) {
         final int id = buf.readUnsignedShort();
 
         final int flags = buf.readUnsignedShort();
@@ -85,8 +85,10 @@ public class DatagramDnsResponseDecoder extends MessageToMessageDecoder<Datagram
         }
 
         final DnsResponse response = new DatagramDnsResponse(
-                sender, null,
-                id, DnsOpCode.valueOf((byte) (flags >> 11 & 0xf)), DnsResponseCode.valueOf((byte) (flags & 0xf)));
+            packet.sender(),
+            packet.recipient(),
+            id,
+            DnsOpCode.valueOf((byte) (flags >> 11 & 0xf)), DnsResponseCode.valueOf((byte) (flags & 0xf)));
 
         response.setRecursionDesired((flags >> 8 & 1) == 1);
         response.setAuthoritativeAnswer((flags >> 10 & 1) == 1);

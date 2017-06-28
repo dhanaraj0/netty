@@ -37,11 +37,16 @@ import java.util.ArrayDeque;
 public final class CoalescingBufferQueue {
 
     private final Channel channel;
-    private final ArrayDeque<Object> bufAndListenerPairs = new ArrayDeque<Object>();
+    private final ArrayDeque<Object> bufAndListenerPairs;
     private int readableBytes;
 
     public CoalescingBufferQueue(Channel channel) {
+        this(channel, 4);
+    }
+
+    public CoalescingBufferQueue(Channel channel, int initSize) {
         this.channel = ObjectUtil.checkNotNull(channel, "channel");
+        bufAndListenerPairs = new ArrayDeque<Object>(initSize);
     }
 
     /**
@@ -124,7 +129,7 @@ public final class CoalescingBufferQueue {
                 bufAndListenerPairs.addFirst(entryBuffer);
                 if (bytes > 0) {
                     // Take a slice of what we can consume and retain it.
-                    toReturn = compose(toReturn, entryBuffer.readSlice(bytes).retain());
+                    toReturn = compose(toReturn, entryBuffer.readRetainedSlice(bytes));
                     bytes = 0;
                 }
                 break;
@@ -147,16 +152,15 @@ public final class CoalescingBufferQueue {
         }
         if (current instanceof CompositeByteBuf) {
             CompositeByteBuf composite = (CompositeByteBuf) current;
-            composite.addComponent(next);
-            composite.writerIndex(composite.writerIndex() + next.readableBytes());
+            composite.addComponent(true, next);
             return composite;
         }
         // Create a composite buffer to accumulate this pair and potentially all the buffers
         // in the queue. Using +2 as we have already dequeued current and next.
         CompositeByteBuf composite = channel.alloc().compositeBuffer(bufAndListenerPairs.size() + 2);
-        composite.addComponent(current);
-        composite.addComponent(next);
-        return composite.writerIndex(current.readableBytes() + next.readableBytes());
+        composite.addComponent(true, current);
+        composite.addComponent(true, next);
+        return composite;
     }
 
     /**

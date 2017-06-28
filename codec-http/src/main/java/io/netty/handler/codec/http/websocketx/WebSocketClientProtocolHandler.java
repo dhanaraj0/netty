@@ -83,8 +83,8 @@ public class WebSocketClientProtocolHandler extends WebSocketProtocolHandler {
      *            with the websocket specifications. Client applications that communicate with a non-standard server
      *            which doesn't require masking might set this to false to achieve a higher performance.
      * @param allowMaskMismatch
-     *            Allows to loosen the masking requirement on received frames. When this is set to false then also
-     *            frames which are not masked properly according to the standard will still be accepted.
+     *            When set to true, frames which are not masked properly according to the standard will still be
+     *            accepted.
      */
     public WebSocketClientProtocolHandler(URI webSocketURL, WebSocketVersion version, String subprotocol,
                                           boolean allowExtensions, HttpHeaders customHeaders,
@@ -182,6 +182,11 @@ public class WebSocketClientProtocolHandler extends WebSocketProtocolHandler {
             // Add the WebSocketClientProtocolHandshakeHandler before this one.
             ctx.pipeline().addBefore(ctx.name(), WebSocketClientProtocolHandshakeHandler.class.getName(),
                     new WebSocketClientProtocolHandshakeHandler(handshaker));
+        }
+        if (cp.get(Utf8FrameValidator.class) == null) {
+            // Add the UFT8 checking before this one.
+            ctx.pipeline().addBefore(ctx.name(), Utf8FrameValidator.class.getName(),
+                    new Utf8FrameValidator());
         }
     }
 }

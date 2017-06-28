@@ -65,7 +65,6 @@ public abstract class ApplicationProtocolNegotiationHandler extends ChannelInbou
             InternalLoggerFactory.getInstance(ApplicationProtocolNegotiationHandler.class);
 
     private final String fallbackProtocol;
-    private SslHandler sslHandler;
 
     /**
      * Creates a new instance with the specified fallback protocol name.
@@ -78,29 +77,21 @@ public abstract class ApplicationProtocolNegotiationHandler extends ChannelInbou
     }
 
     @Override
-    public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
-        // FIXME: There is no way to tell if the SSL handler is placed before the negotiation handler.
-        final SslHandler sslHandler = ctx.pipeline().get(SslHandler.class);
-        if (sslHandler == null) {
-            throw new IllegalStateException(
-                    "cannot find a SslHandler in the pipeline (required for application-level protocol negotiation)");
-        }
-
-        this.sslHandler = sslHandler;
-    }
-
-    @Override
     public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
         if (evt instanceof SslHandshakeCompletionEvent) {
             ctx.pipeline().remove(this);
 
             SslHandshakeCompletionEvent handshakeEvent = (SslHandshakeCompletionEvent) evt;
             if (handshakeEvent.isSuccess()) {
+                SslHandler sslHandler = ctx.pipeline().get(SslHandler.class);
+                if (sslHandler == null) {
+                    throw new IllegalStateException("cannot find a SslHandler in the pipeline (required for " +
+                                                    "application-level protocol negotiation)");
+                }
                 String protocol = sslHandler.applicationProtocol();
                 configurePipeline(ctx, protocol != null? protocol : fallbackProtocol);
             } else {
-                logger.warn("{} TLS handshake failed:", ctx.channel(), handshakeEvent.cause());
-                ctx.close();
+                handshakeFailure(ctx, handshakeEvent.cause());
             }
         }
 
@@ -116,6 +107,14 @@ public abstract class ApplicationProtocolNegotiationHandler extends ChannelInbou
      *                 isn't aware of ALPN/NPN extension
      */
     protected abstract void configurePipeline(ChannelHandlerContext ctx, String protocol) throws Exception;
+
+    /**
+     * Invoked on failed initial SSL/TLS handshake.
+     */
+    protected void handshakeFailure(ChannelHandlerContext ctx, Throwable cause) throws Exception {
+        logger.warn("{} TLS handshake failed:", ctx.channel(), cause);
+        ctx.close();
+    }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {

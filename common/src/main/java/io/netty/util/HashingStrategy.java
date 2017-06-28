@@ -15,8 +15,6 @@
  */
 package io.netty.util;
 
-import io.netty.util.internal.ObjectUtil;
-
 /**
  * Abstraction for hash code generation and equality comparison.
  */
@@ -57,8 +55,8 @@ public interface HashingStrategy<T> {
     boolean equals(T a, T b);
 
     /**
-     * A {@link HashingStrategy} which delegates to java's {@link ObjectUtil#hashCode(Object)}
-     * and {@link ObjectUtil#equals(Object, Object)}.
+     * A {@link HashingStrategy} which delegates to java's {@link Object#hashCode()}
+     * and {@link Object#equals(Object)}.
      */
     @SuppressWarnings("rawtypes")
     HashingStrategy JAVA_HASHER = new HashingStrategy() {

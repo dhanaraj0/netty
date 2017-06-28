@@ -33,7 +33,6 @@ import java.net.NetworkInterface;
 public class ChannelOption<T> extends AbstractConstant<ChannelOption<T>> {
 
     private static final ConstantPool<ChannelOption<Object>> pool = new ConstantPool<ChannelOption<Object>>() {
-        @SuppressWarnings("deprecation")
         @Override
         protected ChannelOption<Object> newConstant(int id, String name) {
             return new ChannelOption<Object>(id, name);
@@ -64,8 +63,8 @@ public class ChannelOption<T> extends AbstractConstant<ChannelOption<T>> {
     }
 
     /**
-     * Creates a new {@link ChannelOption} for the given {@param name} or fail with an
-     * {@link IllegalArgumentException} if a {@link ChannelOption} for the given {@param name} exists.
+     * Creates a new {@link ChannelOption} for the given {@code name} or fail with an
+     * {@link IllegalArgumentException} if a {@link ChannelOption} for the given {@code name} exists.
      */
     @SuppressWarnings("unchecked")
     public static <T> ChannelOption<T> newInstance(String name) {
@@ -80,19 +79,30 @@ public class ChannelOption<T> extends AbstractConstant<ChannelOption<T>> {
     /**
      * @deprecated Use {@link MaxMessagesRecvByteBufAllocator}
      */
+    @Deprecated
     public static final ChannelOption<Integer> MAX_MESSAGES_PER_READ = valueOf("MAX_MESSAGES_PER_READ");
     public static final ChannelOption<Integer> WRITE_SPIN_COUNT = valueOf("WRITE_SPIN_COUNT");
+    /**
+     * @deprecated Use {@link #WRITE_BUFFER_WATER_MARK}
+     */
+    @Deprecated
     public static final ChannelOption<Integer> WRITE_BUFFER_HIGH_WATER_MARK = valueOf("WRITE_BUFFER_HIGH_WATER_MARK");
+    /**
+     * @deprecated Use {@link #WRITE_BUFFER_WATER_MARK}
+     */
+    @Deprecated
     public static final ChannelOption<Integer> WRITE_BUFFER_LOW_WATER_MARK = valueOf("WRITE_BUFFER_LOW_WATER_MARK");
+    public static final ChannelOption<WriteBufferWaterMark> WRITE_BUFFER_WATER_MARK =
+            valueOf("WRITE_BUFFER_WATER_MARK");
 
     public static final ChannelOption<Boolean> ALLOW_HALF_CLOSURE = valueOf("ALLOW_HALF_CLOSURE");
     public static final ChannelOption<Boolean> AUTO_READ = valueOf("AUTO_READ");
 
     /**
-     * @deprecated From version 5.0, {@link Channel} will not be closed on write failure.
+     * @deprecated  Auto close will be removed in a future release.
      *
-     * {@code true} if and only if the {@link Channel} is closed automatically and immediately on write failure.
-     * The default is {@code false}.
+     * If {@code true} then the {@link Channel} is closed automatically and immediately on write failure.
+     * The default value is {@code true}.
      */
     @Deprecated
     public static final ChannelOption<Boolean> AUTO_CLOSE = valueOf("AUTO_CLOSE");
@@ -117,6 +127,9 @@ public class ChannelOption<T> extends AbstractConstant<ChannelOption<T>> {
     @Deprecated
     public static final ChannelOption<Boolean> DATAGRAM_CHANNEL_ACTIVE_ON_REGISTRATION =
             valueOf("DATAGRAM_CHANNEL_ACTIVE_ON_REGISTRATION");
+
+    public static final ChannelOption<Boolean> SINGLE_EVENTEXECUTOR_PER_GROUP =
+            valueOf("SINGLE_EVENTEXECUTOR_PER_GROUP");
 
     /**
      * Creates a new {@link ChannelOption} with the specified unique {@code name}.

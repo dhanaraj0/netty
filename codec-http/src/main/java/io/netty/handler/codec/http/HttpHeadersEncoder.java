@@ -19,48 +19,35 @@ package io.netty.handler.codec.http;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.util.AsciiString;
+import io.netty.util.CharsetUtil;
 
 final class HttpHeadersEncoder {
 
     private HttpHeadersEncoder() {
     }
 
-    public static void encoderHeader(CharSequence name, CharSequence value, ByteBuf buf) throws Exception {
+    static void encoderHeader(CharSequence name, CharSequence value, ByteBuf buf) throws Exception {
         final int nameLen = name.length();
         final int valueLen = value.length();
         final int entryLen = nameLen + valueLen + 4;
-        int offset = buf.writerIndex();
         buf.ensureWritable(entryLen);
-        writeAscii(buf, offset, name, nameLen);
+        int offset = buf.writerIndex();
+        writeAscii(buf, offset, name);
         offset += nameLen;
         buf.setByte(offset ++, ':');
         buf.setByte(offset ++, ' ');
-        writeAscii(buf, offset, value, valueLen);
+        writeAscii(buf, offset, value);
         offset += valueLen;
         buf.setByte(offset ++, '\r');
         buf.setByte(offset ++, '\n');
         buf.writerIndex(offset);
     }
 
-    private static void writeAscii(ByteBuf buf, int offset, CharSequence value, int valueLen) {
+    private static void writeAscii(ByteBuf buf, int offset, CharSequence value) {
         if (value instanceof AsciiString) {
-            writeAsciiString(buf, offset, (AsciiString) value, valueLen);
+            ByteBufUtil.copy((AsciiString) value, 0, buf, offset, value.length());
         } else {
-            writeCharSequence(buf, offset, value, valueLen);
+            buf.setCharSequence(offset, value, CharsetUtil.US_ASCII);
         }
-    }
-
-    private static void writeAsciiString(ByteBuf buf, int offset, AsciiString value, int valueLen) {
-        ByteBufUtil.copy(value, 0, buf, offset, valueLen);
-    }
-
-    private static void writeCharSequence(ByteBuf buf, int offset, CharSequence value, int valueLen) {
-        for (int i = 0; i < valueLen; i ++) {
-            buf.setByte(offset ++, c2b(value.charAt(i)));
-        }
-    }
-
-    private static int c2b(char ch) {
-        return ch < 256? (byte) ch : '?';
     }
 }

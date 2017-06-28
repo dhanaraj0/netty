@@ -16,6 +16,7 @@
 
 package io.netty.handler.ssl.util;
 
+import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.handler.codec.base64.Base64;
 import io.netty.util.CharsetUtil;
@@ -104,7 +105,7 @@ public final class SelfSignedCertificate {
      * @param notAfter Certificate is not valid after this time
      */
     public SelfSignedCertificate(String fqdn, Date notBefore, Date notAfter) throws CertificateException {
-        // Bypass entrophy collection by using insecure random generator.
+        // Bypass entropy collection by using insecure random generator.
         // We just want to generate it without any delay because it's for testing purposes only.
         this(fqdn, ThreadLocalInsecureRandom.current(), 1024, notBefore, notAfter);
     }
@@ -155,18 +156,28 @@ public final class SelfSignedCertificate {
                 logger.debug("Failed to generate a self-signed X.509 certificate using Bouncy Castle:", t2);
                 throw new CertificateException(
                         "No provider succeeded to generate a self-signed certificate. " +
-                                "See debug log for the root cause.");
+                                "See debug log for the root cause.", t2);
+                // TODO: consider using Java 7 addSuppressed to append t
             }
         }
 
         certificate = new File(paths[0]);
         privateKey = new File(paths[1]);
         key = keypair.getPrivate();
+        FileInputStream certificateInput = null;
         try {
-            cert = (X509Certificate) CertificateFactory.getInstance("X509").generateCertificate(
-                    new FileInputStream(certificate));
+            certificateInput = new FileInputStream(certificate);
+            cert = (X509Certificate) CertificateFactory.getInstance("X509").generateCertificate(certificateInput);
         } catch (Exception e) {
             throw new CertificateEncodingException(e);
+        } finally {
+            if (certificateInput != null) {
+                try {
+                    certificateInput.close();
+                } catch (IOException e) {
+                    logger.warn("Failed to close a file: " + certificate, e);
+                }
+            }
         }
     }
 
@@ -208,11 +219,22 @@ public final class SelfSignedCertificate {
 
     static String[] newSelfSignedCertificate(
             String fqdn, PrivateKey key, X509Certificate cert) throws IOException, CertificateEncodingException {
-
         // Encode the private key into a file.
-        String keyText = "-----BEGIN PRIVATE KEY-----\n" +
-                Base64.encode(Unpooled.wrappedBuffer(key.getEncoded()), true).toString(CharsetUtil.US_ASCII) +
-                "\n-----END PRIVATE KEY-----\n";
+        ByteBuf wrappedBuf = Unpooled.wrappedBuffer(key.getEncoded());
+        ByteBuf encodedBuf;
+        final String keyText;
+        try {
+            encodedBuf = Base64.encode(wrappedBuf, true);
+            try {
+                keyText = "-----BEGIN PRIVATE KEY-----\n" +
+                          encodedBuf.toString(CharsetUtil.US_ASCII) +
+                          "\n-----END PRIVATE KEY-----\n";
+            } finally {
+                encodedBuf.release();
+            }
+        } finally {
+            wrappedBuf.release();
+        }
 
         File keyFile = File.createTempFile("keyutil_" + fqdn + '_', ".key");
         keyFile.deleteOnExit();
@@ -229,10 +251,21 @@ public final class SelfSignedCertificate {
             }
         }
 
-        // Encode the certificate into a CRT file.
-        String certText = "-----BEGIN CERTIFICATE-----\n" +
-                Base64.encode(Unpooled.wrappedBuffer(cert.getEncoded()), true).toString(CharsetUtil.US_ASCII) +
-                "\n-----END CERTIFICATE-----\n";
+        wrappedBuf = Unpooled.wrappedBuffer(cert.getEncoded());
+        final String certText;
+        try {
+            encodedBuf = Base64.encode(wrappedBuf, true);
+            try {
+                // Encode the certificate into a CRT file.
+                certText = "-----BEGIN CERTIFICATE-----\n" +
+                           encodedBuf.toString(CharsetUtil.US_ASCII) +
+                           "\n-----END CERTIFICATE-----\n";
+            } finally {
+                encodedBuf.release();
+            }
+        } finally {
+            wrappedBuf.release();
+        }
 
         File certFile = File.createTempFile("keyutil_" + fqdn + '_', ".crt");
         certFile.deleteOnExit();

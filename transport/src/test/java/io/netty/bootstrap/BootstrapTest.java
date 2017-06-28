@@ -24,22 +24,23 @@ import io.netty.channel.ChannelHandler.Sharable;
 import io.netty.channel.ChannelInboundHandler;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
+import io.netty.channel.DefaultEventLoop;
 import io.netty.channel.DefaultEventLoopGroup;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.ServerChannel;
 import io.netty.channel.local.LocalAddress;
 import io.netty.channel.local.LocalChannel;
 import io.netty.channel.local.LocalServerChannel;
-import io.netty.resolver.NameResolver;
-import io.netty.resolver.NameResolverGroup;
-import io.netty.resolver.SimpleNameResolver;
+import io.netty.resolver.AddressResolver;
+import io.netty.resolver.AddressResolverGroup;
+import io.netty.resolver.AbstractAddressResolver;
 import io.netty.util.concurrent.EventExecutor;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
-import io.netty.util.internal.OneTimeTask;
 import org.junit.AfterClass;
 import org.junit.Test;
 
+import java.net.ConnectException;
 import java.net.SocketAddress;
 import java.net.SocketException;
 import java.net.UnknownHostException;
@@ -68,7 +69,6 @@ public class BootstrapTest {
 
     @Test(timeout = 10000)
     public void testBindDeadLock() throws Exception {
-
         final Bootstrap bootstrapA = new Bootstrap();
         bootstrapA.group(groupA);
         bootstrapA.channel(LocalChannel.class);
@@ -105,7 +105,6 @@ public class BootstrapTest {
 
     @Test(timeout = 10000)
     public void testConnectDeadLock() throws Exception {
-
         final Bootstrap bootstrapA = new Bootstrap();
         bootstrapA.group(groupA);
         bootstrapA.channel(LocalChannel.class);
@@ -217,13 +216,26 @@ public class BootstrapTest {
         }
     }
 
+    @Test(expected = ConnectException.class, timeout = 10000)
+    public void testLateRegistrationConnect() throws Exception {
+        EventLoopGroup group = new DelayedEventLoopGroup();
+        try {
+            final Bootstrap bootstrapA = new Bootstrap();
+            bootstrapA.group(group);
+            bootstrapA.channel(LocalChannel.class);
+            bootstrapA.handler(dummyHandler);
+            bootstrapA.connect(LocalAddress.ANY).syncUninterruptibly();
+        } finally {
+            group.shutdownGracefully();
+        }
+    }
+
     @Test
     public void testAsyncResolutionSuccess() throws Exception {
-
         final Bootstrap bootstrapA = new Bootstrap();
         bootstrapA.group(groupA);
         bootstrapA.channel(LocalChannel.class);
-        bootstrapA.resolver(new TestNameResolverGroup(true));
+        bootstrapA.resolver(new TestAddressResolverGroup(true));
         bootstrapA.handler(dummyHandler);
 
         final ServerBootstrap bootstrapB = new ServerBootstrap();
@@ -238,11 +250,10 @@ public class BootstrapTest {
 
     @Test
     public void testAsyncResolutionFailure() throws Exception {
-
         final Bootstrap bootstrapA = new Bootstrap();
         bootstrapA.group(groupA);
         bootstrapA.channel(LocalChannel.class);
-        bootstrapA.resolver(new TestNameResolverGroup(false));
+        bootstrapA.resolver(new TestAddressResolverGroup(false));
         bootstrapA.handler(dummyHandler);
 
         final ServerBootstrap bootstrapB = new ServerBootstrap();
@@ -258,6 +269,42 @@ public class BootstrapTest {
         assertThat(connectFuture.await(10000), is(true));
         assertThat(connectFuture.cause(), is(instanceOf(UnknownHostException.class)));
         assertThat(connectFuture.channel().isOpen(), is(false));
+    }
+
+    @Test
+    public void testChannelFactoryFailureNotifiesPromise() throws Exception {
+        final RuntimeException exception = new RuntimeException("newChannel crash");
+
+        final Bootstrap bootstrap = new Bootstrap()
+                .handler(dummyHandler)
+                .group(groupA)
+                .channelFactory(new ChannelFactory<Channel>() {
+            @Override
+            public Channel newChannel() {
+                throw exception;
+            }
+        });
+
+        ChannelFuture connectFuture = bootstrap.connect(LocalAddress.ANY);
+
+        // Should fail with the RuntimeException.
+        assertThat(connectFuture.await(10000), is(true));
+        assertThat(connectFuture.cause(), sameInstance((Throwable) exception));
+        assertThat(connectFuture.channel(), is(nullValue()));
+    }
+
+    private static final class DelayedEventLoopGroup extends DefaultEventLoop {
+        @Override
+        public ChannelFuture register(final Channel channel, final ChannelPromise promise) {
+            // Delay registration
+            execute(new Runnable() {
+                @Override
+                public void run() {
+                    DelayedEventLoopGroup.super.register(channel, promise);
+                }
+            });
+            return promise;
+        }
     }
 
     private static final class TestEventLoopGroup extends DefaultEventLoopGroup {
@@ -276,6 +323,11 @@ public class BootstrapTest {
         }
 
         @Override
+        public ChannelFuture register(ChannelPromise promise) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public ChannelFuture register(Channel channel, final ChannelPromise promise) {
             throw new UnsupportedOperationException();
         }
@@ -284,17 +336,17 @@ public class BootstrapTest {
     @Sharable
     private static final class DummyHandler extends ChannelInboundHandlerAdapter { }
 
-    private static final class TestNameResolverGroup extends NameResolverGroup<SocketAddress> {
+    private static final class TestAddressResolverGroup extends AddressResolverGroup<SocketAddress> {
 
         private final boolean success;
 
-        TestNameResolverGroup(boolean success) {
+        TestAddressResolverGroup(boolean success) {
             this.success = success;
         }
 
         @Override
-        protected NameResolver<SocketAddress> newResolver(EventExecutor executor) throws Exception {
-            return new SimpleNameResolver<SocketAddress>(executor) {
+        protected AddressResolver<SocketAddress> newResolver(EventExecutor executor) throws Exception {
+            return new AbstractAddressResolver<SocketAddress>(executor) {
 
                 @Override
                 protected boolean doIsResolved(SocketAddress address) {
@@ -304,7 +356,7 @@ public class BootstrapTest {
                 @Override
                 protected void doResolve(
                         final SocketAddress unresolvedAddress, final Promise<SocketAddress> promise) {
-                    executor().execute(new OneTimeTask() {
+                    executor().execute(new Runnable() {
                         @Override
                         public void run() {
                             if (success) {
@@ -320,7 +372,7 @@ public class BootstrapTest {
                 protected void doResolveAll(
                         final SocketAddress unresolvedAddress, final Promise<List<SocketAddress>> promise)
                         throws Exception {
-                    executor().execute(new OneTimeTask() {
+                    executor().execute(new Runnable() {
                         @Override
                         public void run() {
                             if (success) {

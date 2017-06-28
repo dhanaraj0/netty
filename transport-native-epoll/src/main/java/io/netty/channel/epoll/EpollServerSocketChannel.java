@@ -18,14 +18,17 @@ package io.netty.channel.epoll;
 import io.netty.channel.Channel;
 import io.netty.channel.EventLoop;
 import io.netty.channel.socket.ServerSocketChannel;
-import io.netty.channel.unix.FileDescriptor;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
+
+import static io.netty.channel.epoll.LinuxSocket.newSocketStream;
+import static io.netty.channel.unix.NativeInetAddress.address;
 
 /**
  * {@link ServerSocketChannel} implementation that uses linux EPOLL Edge-Triggered Mode for
@@ -38,20 +41,30 @@ public final class EpollServerSocketChannel extends AbstractEpollServerChannel i
     private volatile Collection<InetAddress> tcpMd5SigAddresses = Collections.emptyList();
 
     public EpollServerSocketChannel() {
-        super(Native.socketStreamFd());
+        super(newSocketStream(), false);
         config = new EpollServerSocketChannelConfig(this);
     }
 
-    /**
-     * Creates a new {@link EpollServerSocketChannel} from an existing {@link FileDescriptor}.
-     */
-    public EpollServerSocketChannel(FileDescriptor fd) {
-        super(fd);
-        config = new EpollServerSocketChannelConfig(this);
+    public EpollServerSocketChannel(int fd) {
+        // Must call this constructor to ensure this object's local address is configured correctly.
+        // The local address can only be obtained from a Socket object.
+        this(new LinuxSocket(fd));
+    }
 
+    EpollServerSocketChannel(LinuxSocket fd) {
+        super(fd);
         // As we create an EpollServerSocketChannel from a FileDescriptor we should try to obtain the remote and local
         // address from it. This is needed as the FileDescriptor may be bound already.
-        local = Native.localAddress(fd.intValue());
+        local = fd.localAddress();
+        config = new EpollServerSocketChannelConfig(this);
+    }
+
+    EpollServerSocketChannel(LinuxSocket fd, boolean active) {
+        super(fd, active);
+        // As we create an EpollServerSocketChannel from a FileDescriptor we should try to obtain the remote and local
+        // address from it. This is needed as the FileDescriptor may be bound already.
+        local = fd.localAddress();
+        config = new EpollServerSocketChannelConfig(this);
     }
 
     @Override
@@ -63,13 +76,12 @@ public final class EpollServerSocketChannel extends AbstractEpollServerChannel i
     protected void doBind(SocketAddress localAddress) throws Exception {
         InetSocketAddress addr = (InetSocketAddress) localAddress;
         checkResolvable(addr);
-        int fd = fd().intValue();
-        Native.bind(fd, addr);
-        local = Native.localAddress(fd);
+        socket.bind(addr);
+        local = socket.localAddress();
         if (Native.IS_SUPPORTING_TCP_FASTOPEN && config.getTcpFastopen() > 0) {
-            Native.setTcpFastopen(fd, config.getTcpFastopen());
+            socket.setTcpFastOpen(config.getTcpFastopen());
         }
-        Native.listen(fd, config.getBacklog());
+        socket.listen(config.getBacklog());
         active = true;
     }
 
@@ -95,14 +107,14 @@ public final class EpollServerSocketChannel extends AbstractEpollServerChannel i
 
     @Override
     protected Channel newChildChannel(int fd, byte[] address, int offset, int len) throws Exception {
-        return new EpollSocketChannel(this, fd, Native.address(address, offset, len));
+        return new EpollSocketChannel(this, new LinuxSocket(fd), address(address, offset, len));
     }
 
     Collection<InetAddress> tcpMd5SigAddresses() {
         return tcpMd5SigAddresses;
     }
 
-    void setTcpMd5Sig(Map<InetAddress, byte[]> keys) {
-        this.tcpMd5SigAddresses = TcpMd5Util.newTcpMd5Sigs(this, tcpMd5SigAddresses, keys);
+    void setTcpMd5Sig(Map<InetAddress, byte[]> keys) throws IOException {
+        tcpMd5SigAddresses = TcpMd5Util.newTcpMd5Sigs(this, tcpMd5SigAddresses, keys);
     }
 }

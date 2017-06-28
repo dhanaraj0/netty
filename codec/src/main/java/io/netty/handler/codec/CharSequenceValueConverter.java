@@ -14,10 +14,11 @@
  */
 package io.netty.handler.codec;
 
-import io.netty.handler.codec.DefaultHeaders.HeaderDateFormat;
+import io.netty.util.AsciiString;
 import io.netty.util.internal.PlatformDependent;
 
 import java.text.ParseException;
+import java.util.Date;
 
 /**
  * Converts to/from native types, general {@link Object}, and {@link CharSequence}s.
@@ -65,6 +66,9 @@ public class CharSequenceValueConverter implements ValueConverter<CharSequence> 
 
     @Override
     public boolean convertToBoolean(CharSequence value) {
+        if (value instanceof AsciiString) {
+            return ((AsciiString) value).parseBoolean();
+        }
         return Boolean.parseBoolean(value.toString());
     }
 
@@ -75,14 +79,14 @@ public class CharSequenceValueConverter implements ValueConverter<CharSequence> 
 
     @Override
     public byte convertToByte(CharSequence value) {
-        return Byte.valueOf(value.toString());
+        if (value instanceof AsciiString) {
+            return ((AsciiString) value).byteAt(0);
+        }
+        return Byte.parseByte(value.toString());
     }
 
     @Override
     public char convertToChar(CharSequence value) {
-        if (value.length() == 0) {
-            throw new IllegalArgumentException("'value' is empty.");
-        }
         return value.charAt(0);
     }
 
@@ -93,16 +97,25 @@ public class CharSequenceValueConverter implements ValueConverter<CharSequence> 
 
     @Override
     public short convertToShort(CharSequence value) {
-        return Short.valueOf(value.toString());
+        if (value instanceof AsciiString) {
+            return ((AsciiString) value).parseShort();
+        }
+        return Short.parseShort(value.toString());
     }
 
     @Override
     public int convertToInt(CharSequence value) {
+        if (value instanceof AsciiString) {
+            return ((AsciiString) value).parseInt();
+        }
         return Integer.parseInt(value.toString());
     }
 
     @Override
     public long convertToLong(CharSequence value) {
+        if (value instanceof AsciiString) {
+            return ((AsciiString) value).parseLong();
+        }
         return Long.parseLong(value.toString());
     }
 
@@ -113,21 +126,27 @@ public class CharSequenceValueConverter implements ValueConverter<CharSequence> 
 
     @Override
     public long convertToTimeMillis(CharSequence value) {
-        try {
-            return HeaderDateFormat.get().parse(value.toString());
-        } catch (ParseException e) {
-            PlatformDependent.throwException(e);
+        Date date = DateFormatter.parseHttpDate(value);
+        if (date == null) {
+            PlatformDependent.throwException(new ParseException("header can't be parsed into a Date: " + value, 0));
+            return 0;
         }
-        return 0;
+        return date.getTime();
     }
 
     @Override
     public float convertToFloat(CharSequence value) {
-        return Float.valueOf(value.toString());
+        if (value instanceof AsciiString) {
+            return ((AsciiString) value).parseFloat();
+        }
+        return Float.parseFloat(value.toString());
     }
 
     @Override
     public double convertToDouble(CharSequence value) {
-        return Double.valueOf(value.toString());
+        if (value instanceof AsciiString) {
+            return ((AsciiString) value).parseDouble();
+        }
+        return Double.parseDouble(value.toString());
     }
 }

@@ -16,12 +16,15 @@
 package io.netty.handler.codec.http;
 
 import io.netty.handler.codec.DefaultHeaders;
+import io.netty.handler.codec.Headers;
 import io.netty.handler.codec.ValueConverter;
 import io.netty.util.HashingStrategy;
 import io.netty.util.internal.StringUtil;
 
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 
 import static io.netty.util.AsciiString.CASE_INSENSITIVE_HASHER;
 import static io.netty.util.internal.StringUtil.COMMA;
@@ -36,7 +39,13 @@ public class CombinedHttpHeaders extends DefaultHttpHeaders {
         super(new CombinedHttpHeadersImpl(CASE_INSENSITIVE_HASHER, valueConverter(validate), nameValidator(validate)));
     }
 
-    private static final class CombinedHttpHeadersImpl extends DefaultHeaders<CharSequence> {
+    @Override
+    public boolean containsValue(CharSequence name, CharSequence value, boolean ignoreCase) {
+        return super.containsValue(name, StringUtil.trimOws(value), ignoreCase);
+    }
+
+    private static final class CombinedHttpHeadersImpl
+            extends DefaultHeaders<CharSequence, CharSequence, CombinedHttpHeadersImpl> {
         /**
          * An estimate of the size of a header value.
          */
@@ -49,7 +58,7 @@ public class CombinedHttpHeaders extends DefaultHttpHeaders {
                 objectEscaper = new CsvValueEscaper<Object>() {
                     @Override
                     public CharSequence escape(Object value) {
-                        return StringUtil.escapeCsv(valueConverter().convertObject(value));
+                        return StringUtil.escapeCsv(valueConverter().convertObject(value), true);
                     }
                 };
             }
@@ -61,7 +70,7 @@ public class CombinedHttpHeaders extends DefaultHttpHeaders {
                 charSequenceEscaper = new CsvValueEscaper<CharSequence>() {
                     @Override
                     public CharSequence escape(CharSequence value) {
-                        return StringUtil.escapeCsv(value);
+                        return StringUtil.escapeCsv(value, true);
                     }
                 };
             }
@@ -75,8 +84,64 @@ public class CombinedHttpHeaders extends DefaultHttpHeaders {
         }
 
         @Override
+        public List<CharSequence> getAll(CharSequence name) {
+            List<CharSequence> values = super.getAll(name);
+            if (values.isEmpty()) {
+                return values;
+            }
+            if (values.size() != 1) {
+                throw new IllegalStateException("CombinedHttpHeaders should only have one value");
+            }
+            return StringUtil.unescapeCsvFields(values.get(0));
+        }
+
+        @Override
+        public CombinedHttpHeadersImpl add(Headers<? extends CharSequence, ? extends CharSequence, ?> headers) {
+            // Override the fast-copy mechanism used by DefaultHeaders
+            if (headers == this) {
+                throw new IllegalArgumentException("can't add to itself.");
+            }
+            if (headers instanceof CombinedHttpHeadersImpl) {
+                if (isEmpty()) {
+                    // Can use the fast underlying copy
+                    addImpl(headers);
+                } else {
+                    // Values are already escaped so don't escape again
+                    for (Map.Entry<? extends CharSequence, ? extends CharSequence> header : headers) {
+                        addEscapedValue(header.getKey(), header.getValue());
+                    }
+                }
+            } else {
+                for (Map.Entry<? extends CharSequence, ? extends CharSequence> header : headers) {
+                    add(header.getKey(), header.getValue());
+                }
+            }
+            return this;
+        }
+
+        @Override
+        public CombinedHttpHeadersImpl set(Headers<? extends CharSequence, ? extends CharSequence, ?> headers) {
+            if (headers == this) {
+                return this;
+            }
+            clear();
+            return add(headers);
+        }
+
+        @Override
+        public CombinedHttpHeadersImpl setAll(Headers<? extends CharSequence, ? extends CharSequence, ?> headers) {
+            if (headers == this) {
+                return this;
+            }
+            for (CharSequence key : headers.names()) {
+                remove(key);
+            }
+            return add(headers);
+        }
+
+        @Override
         public CombinedHttpHeadersImpl add(CharSequence name, CharSequence value) {
-            return addEscapedValue(name, StringUtil.escapeCsv(value));
+            return addEscapedValue(name, charSequenceEscaper().escape(value));
         }
 
         @Override
@@ -87,6 +152,11 @@ public class CombinedHttpHeaders extends DefaultHttpHeaders {
         @Override
         public CombinedHttpHeadersImpl add(CharSequence name, Iterable<? extends CharSequence> values) {
             return addEscapedValue(name, commaSeparate(charSequenceEscaper(), values));
+        }
+
+        @Override
+        public CombinedHttpHeadersImpl addObject(CharSequence name, Object value) {
+            return addEscapedValue(name, commaSeparate(objectEscaper(), value));
         }
 
         @Override
@@ -108,6 +178,12 @@ public class CombinedHttpHeaders extends DefaultHttpHeaders {
         @Override
         public CombinedHttpHeadersImpl set(CharSequence name, Iterable<? extends CharSequence> values) {
             super.set(name, commaSeparate(charSequenceEscaper(), values));
+            return this;
+        }
+
+        @Override
+        public CombinedHttpHeadersImpl setObject(CharSequence name, Object value) {
+            super.set(name, commaSeparate(objectEscaper(), value));
             return this;
         }
 
@@ -161,7 +237,7 @@ public class CombinedHttpHeaders extends DefaultHttpHeaders {
             return sb;
         }
 
-        private CharSequence commaSeparateEscapedValues(CharSequence currentValue, CharSequence value) {
+        private static CharSequence commaSeparateEscapedValues(CharSequence currentValue, CharSequence value) {
             return new StringBuilder(currentValue.length() + 1 + value.length())
                     .append(currentValue)
                     .append(COMMA)

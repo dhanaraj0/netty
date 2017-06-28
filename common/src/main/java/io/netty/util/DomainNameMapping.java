@@ -19,10 +19,13 @@ package io.netty.util;
 import io.netty.util.internal.StringUtil;
 
 import java.net.IDN;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Pattern;
+
+import static io.netty.util.internal.ObjectUtil.checkNotNull;
+import static io.netty.util.internal.StringUtil.commonSuffixOfLength;
 
 /**
  * Maps a domain name to its associated value object.
@@ -33,18 +36,18 @@ import java.util.regex.Pattern;
  */
 public class DomainNameMapping<V> implements Mapping<String, V> {
 
-    private static final Pattern DNS_WILDCARD_PATTERN = Pattern.compile("^\\*\\..*");
-
+    final V defaultValue;
     private final Map<String, V> map;
-
-    private final V defaultValue;
+    private final Map<String, V> unmodifiableMap;
 
     /**
      * Creates a default, order-sensitive mapping. If your hostnames are in conflict, the mapping
      * will choose the one you add first.
      *
      * @param defaultValue the default value for {@link #map(String)} to return when nothing matches the input
+     * @deprecated use {@link DomainNameMappingBuilder} to create and fill the mapping instead
      */
+    @Deprecated
     public DomainNameMapping(V defaultValue) {
         this(4, defaultValue);
     }
@@ -54,14 +57,19 @@ public class DomainNameMapping<V> implements Mapping<String, V> {
      * will choose the one you add first.
      *
      * @param initialCapacity initial capacity for the internal map
-     * @param defaultValue the default value for {@link #map(String)} to return when nothing matches the input
+     * @param defaultValue    the default value for {@link #map(String)} to return when nothing matches the input
+     * @deprecated use {@link DomainNameMappingBuilder} to create and fill the mapping instead
      */
+    @Deprecated
     public DomainNameMapping(int initialCapacity, V defaultValue) {
-        if (defaultValue == null) {
-            throw new NullPointerException("defaultValue");
-        }
-        map = new LinkedHashMap<String, V>(initialCapacity);
-        this.defaultValue = defaultValue;
+        this(new LinkedHashMap<String, V>(initialCapacity), defaultValue);
+    }
+
+    DomainNameMapping(Map<String, V> map, V defaultValue) {
+        this.defaultValue = checkNotNull(defaultValue, "defaultValue");
+        this.map = map;
+        unmodifiableMap = map != null ? Collections.unmodifiableMap(map)
+                                      : null;
     }
 
     /**
@@ -72,39 +80,31 @@ public class DomainNameMapping<V> implements Mapping<String, V> {
      * </p>
      *
      * @param hostname the host name (optionally wildcard)
-     * @param output the output value that will be returned by {@link #map(String)} when the specified host name
-     *               matches the specified input host name
+     * @param output   the output value that will be returned by {@link #map(String)} when the specified host name
+     *                 matches the specified input host name
+     * @deprecated use {@link DomainNameMappingBuilder} to create and fill the mapping instead
      */
+    @Deprecated
     public DomainNameMapping<V> add(String hostname, V output) {
-        if (hostname == null) {
-            throw new NullPointerException("input");
-        }
-
-        if (output == null) {
-            throw new NullPointerException("output");
-        }
-
-        map.put(normalizeHostname(hostname), output);
+        map.put(normalizeHostname(checkNotNull(hostname, "hostname")), checkNotNull(output, "output"));
         return this;
     }
 
     /**
      * Simple function to match <a href="http://en.wikipedia.org/wiki/Wildcard_DNS_record">DNS wildcard</a>.
      */
-    private static boolean matches(String hostNameTemplate, String hostName) {
-        // note that inputs are converted and lowercased already
-        if (DNS_WILDCARD_PATTERN.matcher(hostNameTemplate).matches()) {
-            return hostNameTemplate.substring(2).equals(hostName) ||
-                    hostName.endsWith(hostNameTemplate.substring(1));
-        } else {
-            return hostNameTemplate.equals(hostName);
+    static boolean matches(String template, String hostName) {
+        if (template.startsWith("*.")) {
+            return template.regionMatches(2, hostName, 0, hostName.length())
+                || commonSuffixOfLength(hostName, template, template.length() - 1);
         }
+        return template.equals(hostName);
     }
 
     /**
      * IDNA ASCII conversion and case normalization
      */
-    private static String normalizeHostname(String hostname) {
+    static String normalizeHostname(String hostname) {
         if (needsNormalization(hostname)) {
             hostname = IDN.toASCII(hostname, IDN.ALLOW_UNASSIGNED);
         }
@@ -113,7 +113,7 @@ public class DomainNameMapping<V> implements Mapping<String, V> {
 
     private static boolean needsNormalization(String hostname) {
         final int length = hostname.length();
-        for (int i = 0; i < length; i ++) {
+        for (int i = 0; i < length; i++) {
             int c = hostname.charAt(i);
             if (c > 0x7F) {
                 return true;
@@ -123,18 +123,24 @@ public class DomainNameMapping<V> implements Mapping<String, V> {
     }
 
     @Override
-    public V map(String input) {
-        if (input != null) {
-            input = normalizeHostname(input);
+    public V map(String hostname) {
+        if (hostname != null) {
+            hostname = normalizeHostname(hostname);
 
             for (Map.Entry<String, V> entry : map.entrySet()) {
-                if (matches(entry.getKey(), input)) {
+                if (matches(entry.getKey(), hostname)) {
                     return entry.getValue();
                 }
             }
         }
-
         return defaultValue;
+    }
+
+    /**
+     * Returns a read-only {@link Map} of the domain mapping patterns and their associated value objects.
+     */
+    public Map<String, V> asMap() {
+        return unmodifiableMap;
     }
 
     @Override

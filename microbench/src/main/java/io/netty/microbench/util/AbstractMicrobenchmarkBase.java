@@ -20,6 +20,8 @@ import io.netty.util.ResourceLeakDetector;
 import io.netty.util.internal.SystemPropertyUtil;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.Test;
 import org.openjdk.jmh.annotations.Measurement;
@@ -43,7 +45,7 @@ public abstract class AbstractMicrobenchmarkBase {
     protected static final String[] BASE_JVM_ARGS = {
         "-server", "-dsa", "-da", "-ea:io.netty...", "-XX:+AggressiveOpts", "-XX:+UseBiasedLocking",
         "-XX:+UseFastAccessorMethods", "-XX:+OptimizeStringConcat",
-        "-XX:+HeapDumpOnOutOfMemoryError", "-Dio.netty.noResourceLeakDetection"};
+        "-XX:+HeapDumpOnOutOfMemoryError", "-Dio.netty.leakDetection.level=disabled"};
 
     static {
         ResourceLeakDetector.setLevel(ResourceLeakDetector.Level.DISABLED);
@@ -82,6 +84,20 @@ public abstract class AbstractMicrobenchmarkBase {
     }
 
     protected abstract String[] jvmArgs();
+
+    protected static String[] removeAssertions(String[] jvmArgs) {
+        List<String> customArgs = new ArrayList<String>(jvmArgs.length);
+        for (String arg : jvmArgs) {
+            if (!arg.startsWith("-ea")) {
+                customArgs.add(arg);
+            }
+        }
+        if (jvmArgs.length != customArgs.size()) {
+            jvmArgs = new String[customArgs.size()];
+            customArgs.toArray(jvmArgs);
+        }
+        return jvmArgs;
+    }
 
     @Test
     public void run() throws Exception {

@@ -14,16 +14,6 @@
  */
 package io.netty.handler.codec.http2;
 
-import static io.netty.handler.codec.base64.Base64Dialect.URL_SAFE;
-import static io.netty.handler.codec.http2.Http2CodecUtil.HTTP_UPGRADE_PROTOCOL_NAME;
-import static io.netty.handler.codec.http2.Http2CodecUtil.HTTP_UPGRADE_SETTINGS_HEADER;
-import static io.netty.handler.codec.http2.Http2CodecUtil.SETTING_ENTRY_LENGTH;
-import static io.netty.handler.codec.http2.Http2CodecUtil.writeUnsignedInt;
-import static io.netty.handler.codec.http2.Http2CodecUtil.writeUnsignedShort;
-import static io.netty.util.CharsetUtil.UTF_8;
-import static io.netty.util.ReferenceCountUtil.release;
-import static io.netty.util.internal.ObjectUtil.checkNotNull;
-
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.base64.Base64;
@@ -31,14 +21,24 @@ import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpClientUpgradeHandler;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.util.collection.CharObjectMap;
+import io.netty.util.internal.UnstableApi;
 
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
+import static io.netty.handler.codec.base64.Base64Dialect.URL_SAFE;
+import static io.netty.handler.codec.http2.Http2CodecUtil.HTTP_UPGRADE_PROTOCOL_NAME;
+import static io.netty.handler.codec.http2.Http2CodecUtil.HTTP_UPGRADE_SETTINGS_HEADER;
+import static io.netty.handler.codec.http2.Http2CodecUtil.SETTING_ENTRY_LENGTH;
+import static io.netty.util.CharsetUtil.UTF_8;
+import static io.netty.util.ReferenceCountUtil.release;
+import static io.netty.util.internal.ObjectUtil.checkNotNull;
+
 /**
  * Client-side cleartext upgrade codec from HTTP to HTTP/2.
  */
+@UnstableApi
 public class Http2ClientUpgradeCodec implements HttpClientUpgradeHandler.UpgradeCodec {
 
     private static final List<CharSequence> UPGRADE_HEADERS = Collections.singletonList(HTTP_UPGRADE_SETTINGS_HEADER);
@@ -106,8 +106,8 @@ public class Http2ClientUpgradeCodec implements HttpClientUpgradeHandler.Upgrade
             int payloadLength = SETTING_ENTRY_LENGTH * settings.size();
             buf = ctx.alloc().buffer(payloadLength);
             for (CharObjectMap.PrimitiveEntry<Long> entry : settings.entries()) {
-                writeUnsignedShort(entry.key(), buf);
-                writeUnsignedInt(entry.value(), buf);
+                buf.writeChar(entry.key());
+                buf.writeInt(entry.value().intValue());
             }
 
             // Base64 encode the payload and then convert to a string for the header.

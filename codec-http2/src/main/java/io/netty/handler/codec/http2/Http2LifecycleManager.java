@@ -18,26 +18,28 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
+import io.netty.util.internal.UnstableApi;
 
 /**
  * Manager for the life cycle of the HTTP/2 connection. Handles graceful shutdown of the channel,
  * closing only after all of the streams have closed.
  */
+@UnstableApi
 public interface Http2LifecycleManager {
 
     /**
      * Closes the local side of the {@code stream}. Depending on the {@code stream} state this may result in
-     * {@code stream} being closed. See {@link closeStream(Http2Stream, ChannelFuture)}.
+     * {@code stream} being closed. See {@link #closeStream(Http2Stream, ChannelFuture)}.
      * @param stream the stream to be half closed.
-     * @param future See {@link closeStream(Http2Stream, ChannelFuture)}.
+     * @param future See {@link #closeStream(Http2Stream, ChannelFuture)}.
      */
     void closeStreamLocal(Http2Stream stream, ChannelFuture future);
 
     /**
      * Closes the remote side of the {@code stream}. Depending on the {@code stream} state this may result in
-     * {@code stream} being closed. See {@link closeStream(Http2Stream, ChannelFuture)}.
+     * {@code stream} being closed. See {@link #closeStream(Http2Stream, ChannelFuture)}.
      * @param stream the stream to be half closed.
-     * @param future See {@link closeStream(Http2Stream, ChannelFuture)}.
+     * @param future See {@link #closeStream(Http2Stream, ChannelFuture)}.
      */
     void closeStreamRemote(Http2Stream stream, ChannelFuture future);
 

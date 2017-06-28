@@ -16,6 +16,7 @@
 package io.netty.handler.codec.http.cors;
 
 import io.netty.channel.ChannelDuplexHandler;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
@@ -24,12 +25,14 @@ import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpResponse;
+import io.netty.handler.codec.http.HttpUtil;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 
 import static io.netty.handler.codec.http.HttpMethod.*;
 import static io.netty.handler.codec.http.HttpResponseStatus.*;
 import static io.netty.util.ReferenceCountUtil.*;
+import static io.netty.util.internal.ObjectUtil.checkNotNull;
 
 /**
  * Handles <a href="http://www.w3.org/TR/cors/">Cross Origin Resource Sharing</a> (CORS) requests.
@@ -41,12 +44,16 @@ public class CorsHandler extends ChannelDuplexHandler {
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(CorsHandler.class);
     private static final String ANY_ORIGIN = "*";
+    private static final String NULL_ORIGIN = "null";
     private final CorsConfig config;
 
     private HttpRequest request;
 
+    /**
+     * Creates a new instance with the specified {@link CorsConfig}.
+     */
     public CorsHandler(final CorsConfig config) {
-        this.config = config;
+        this.config = checkNotNull(config, "config");
     }
 
     @Override
@@ -57,7 +64,7 @@ public class CorsHandler extends ChannelDuplexHandler {
                 handlePreflight(ctx, request);
                 return;
             }
-            if (config.isShortCurcuit() && !validateOrigin()) {
+            if (config.isShortCircuit() && !validateOrigin()) {
                 forbidden(ctx, request);
                 return;
             }
@@ -75,7 +82,7 @@ public class CorsHandler extends ChannelDuplexHandler {
             setPreflightHeaders(response);
         }
         release(request);
-        ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+        respond(ctx, request, response);
     }
 
     /**
@@ -91,8 +98,8 @@ public class CorsHandler extends ChannelDuplexHandler {
     private boolean setOrigin(final HttpResponse response) {
         final String origin = request.headers().get(HttpHeaderNames.ORIGIN);
         if (origin != null) {
-            if ("null".equals(origin) && config.isNullOriginAllowed()) {
-                setAnyOrigin(response);
+            if (NULL_ORIGIN.equals(origin) && config.isNullOriginAllowed()) {
+                setNullOrigin(response);
                 return true;
             }
             if (config.isAnyOriginSupported()) {
@@ -109,7 +116,7 @@ public class CorsHandler extends ChannelDuplexHandler {
                 setVaryHeader(response);
                 return true;
             }
-            logger.debug("Request origin [" + origin + "] was not among the configured origins " + config.origins());
+            logger.debug("Request origin [{}]] was not among the configured origins [{}]", origin, config.origins());
         }
         return false;
     }
@@ -142,6 +149,10 @@ public class CorsHandler extends ChannelDuplexHandler {
 
     private static void setAnyOrigin(final HttpResponse response) {
         setOrigin(response, ANY_ORIGIN);
+    }
+
+    private static void setNullOrigin(final HttpResponse response) {
+        setOrigin(response, NULL_ORIGIN);
     }
 
     private static void setOrigin(final HttpResponse response, final String origin) {
@@ -187,23 +198,29 @@ public class CorsHandler extends ChannelDuplexHandler {
             final HttpResponse response = (HttpResponse) msg;
             if (setOrigin(response)) {
                 setAllowCredentials(response);
-                setAllowHeaders(response);
                 setExposeHeaders(response);
             }
         }
         ctx.writeAndFlush(msg, promise);
     }
 
-    @Override
-    public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) throws Exception {
-        logger.error("Caught error in CorsHandler", cause);
-        ctx.fireExceptionCaught(cause);
+    private static void forbidden(final ChannelHandlerContext ctx, final HttpRequest request) {
+        release(request);
+        respond(ctx, request, new DefaultFullHttpResponse(request.protocolVersion(), FORBIDDEN));
     }
 
-    private static void forbidden(final ChannelHandlerContext ctx, final HttpRequest request) {
-        ctx.writeAndFlush(new DefaultFullHttpResponse(request.protocolVersion(), FORBIDDEN))
-                .addListener(ChannelFutureListener.CLOSE);
-        release(request);
+    private static void respond(
+            final ChannelHandlerContext ctx,
+            final HttpRequest request,
+            final HttpResponse response) {
+
+        final boolean keepAlive = HttpUtil.isKeepAlive(request);
+
+        HttpUtil.setKeepAlive(response, keepAlive);
+
+        final ChannelFuture future = ctx.writeAndFlush(response);
+        if (!keepAlive) {
+            future.addListener(ChannelFutureListener.CLOSE);
+        }
     }
 }
-

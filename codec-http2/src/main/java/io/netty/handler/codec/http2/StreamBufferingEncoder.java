@@ -15,23 +15,23 @@
 
 package io.netty.handler.codec.http2;
 
-import static io.netty.handler.codec.http2.Http2CodecUtil.SMALLEST_MAX_CONCURRENT_STREAMS;
-import static io.netty.handler.codec.http2.Http2Error.PROTOCOL_ERROR;
-import static io.netty.handler.codec.http2.Http2Exception.connectionError;
-
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
-import io.netty.util.ByteString;
 import io.netty.util.ReferenceCountUtil;
+import io.netty.util.internal.UnstableApi;
 
 import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Queue;
 import java.util.TreeMap;
+
+import static io.netty.handler.codec.http2.Http2CodecUtil.SMALLEST_MAX_CONCURRENT_STREAMS;
+import static io.netty.handler.codec.http2.Http2Error.PROTOCOL_ERROR;
+import static io.netty.handler.codec.http2.Http2Exception.connectionError;
 
 /**
  * Implementation of a {@link Http2ConnectionEncoder} that dispatches all method call to another
@@ -47,10 +47,15 @@ import java.util.TreeMap;
  * with an ID less than the specified {@code lastStreamId} will immediately fail with a
  * {@link Http2GoAwayException}.
  * <p/>
+ * <p>
+ * If the channel/encoder gets closed, all new and buffered writes will immediately fail with a
+ * {@link Http2ChannelClosedException}.
+ * </p>
  * <p>This implementation makes the buffering mostly transparent and is expected to be used as a
  * drop-in decorator of {@link DefaultHttp2ConnectionEncoder}.
  * </p>
  */
+@UnstableApi
 public class StreamBufferingEncoder extends DecoratingHttp2ConnectionEncoder {
 
     /**
@@ -72,9 +77,9 @@ public class StreamBufferingEncoder extends DecoratingHttp2ConnectionEncoder {
         private static final long serialVersionUID = 1326785622777291198L;
         private final int lastStreamId;
         private final long errorCode;
-        private final ByteString debugData;
+        private final byte[] debugData;
 
-        public Http2GoAwayException(int lastStreamId, long errorCode, ByteString debugData) {
+        public Http2GoAwayException(int lastStreamId, long errorCode, byte[] debugData) {
             super(Http2Error.STREAM_CLOSED);
             this.lastStreamId = lastStreamId;
             this.errorCode = errorCode;
@@ -89,7 +94,7 @@ public class StreamBufferingEncoder extends DecoratingHttp2ConnectionEncoder {
             return errorCode;
         }
 
-        public ByteString debugData() {
+        public byte[] debugData() {
             return debugData;
         }
     }
@@ -235,14 +240,17 @@ public class StreamBufferingEncoder extends DecoratingHttp2ConnectionEncoder {
         while (!pendingStreams.isEmpty() && canCreateStream()) {
             Map.Entry<Integer, PendingStream> entry = pendingStreams.pollFirstEntry();
             PendingStream pendingStream = entry.getValue();
-            pendingStream.sendFrames();
+            try {
+                pendingStream.sendFrames();
+            } catch (Throwable t) {
+                pendingStream.close(t);
+            }
         }
     }
 
     private void cancelGoAwayStreams(int lastStreamId, long errorCode, ByteBuf debugData) {
         Iterator<PendingStream> iter = pendingStreams.values().iterator();
-        Exception e = new Http2GoAwayException(lastStreamId, errorCode,
-                new ByteString(ByteBufUtil.getBytes(debugData), false));
+        Exception e = new Http2GoAwayException(lastStreamId, errorCode, ByteBufUtil.getBytes(debugData));
         while (iter.hasNext()) {
             PendingStream stream = iter.next();
             if (stream.streamId > lastStreamId) {
@@ -328,8 +336,7 @@ public class StreamBufferingEncoder extends DecoratingHttp2ConnectionEncoder {
 
         @Override
         void send(ChannelHandlerContext ctx, int streamId) {
-            writeHeaders(ctx, streamId, headers, streamDependency, weight, exclusive, padding,
-                    endOfStream, promise);
+            writeHeaders(ctx, streamId, headers, streamDependency, weight, exclusive, padding, endOfStream, promise);
         }
     }
 

@@ -18,15 +18,21 @@ package io.netty.handler.codec.http;
 import io.netty.buffer.ByteBuf;
 
 /**
- * Combinate the {@link HttpRequest} and {@link FullHttpMessage}, so the request is a <i>complete</i> HTTP
+ * Combine the {@link HttpRequest} and {@link FullHttpMessage}, so the request is a <i>complete</i> HTTP
  * request.
  */
 public interface FullHttpRequest extends HttpRequest, FullHttpMessage {
     @Override
-    FullHttpRequest copy(ByteBuf newContent);
+    FullHttpRequest copy();
 
     @Override
-    FullHttpRequest copy();
+    FullHttpRequest duplicate();
+
+    @Override
+    FullHttpRequest retainedDuplicate();
+
+    @Override
+    FullHttpRequest replace(ByteBuf content);
 
     @Override
     FullHttpRequest retain(int increment);
@@ -39,9 +45,6 @@ public interface FullHttpRequest extends HttpRequest, FullHttpMessage {
 
     @Override
     FullHttpRequest touch(Object hint);
-
-    @Override
-    FullHttpRequest duplicate();
 
     @Override
     FullHttpRequest setProtocolVersion(HttpVersion version);

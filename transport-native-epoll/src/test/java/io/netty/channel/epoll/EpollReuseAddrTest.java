@@ -27,7 +27,6 @@ import io.netty.testsuite.util.TestUtils;
 import io.netty.util.NetUtil;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.ResourceLeakDetector;
-import io.netty.util.internal.StringUtil;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Ignore;
@@ -48,12 +47,12 @@ public class EpollReuseAddrTest {
     private static final int MINOR;
     private static final int BUGFIX;
     static {
-        String kernelVersion = Native.kernelVersion();
+        String kernelVersion = Native.KERNEL_VERSION;
         int index = kernelVersion.indexOf('-');
         if (index > -1) {
             kernelVersion = kernelVersion.substring(0, index);
         }
-        String[] versionParts = StringUtil.split(kernelVersion, '.');
+        String[] versionParts = kernelVersion.split("\\.");
         if (versionParts.length <= 3) {
             MAJOR = Integer.parseInt(versionParts[0]);
             MINOR = Integer.parseInt(versionParts[1]);

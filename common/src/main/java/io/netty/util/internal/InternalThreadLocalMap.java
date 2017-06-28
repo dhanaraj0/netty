@@ -22,6 +22,7 @@ import io.netty.util.concurrent.FastThreadLocalThread;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CharsetEncoder;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.IdentityHashMap;
 import java.util.Map;
@@ -34,22 +35,16 @@ import java.util.WeakHashMap;
  */
 public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap {
 
+    private static final int DEFAULT_ARRAY_LIST_INITIAL_CAPACITY = 8;
+
     public static final Object UNSET = new Object();
 
     public static InternalThreadLocalMap getIfSet() {
         Thread thread = Thread.currentThread();
-        InternalThreadLocalMap threadLocalMap;
         if (thread instanceof FastThreadLocalThread) {
-            threadLocalMap = ((FastThreadLocalThread) thread).threadLocalMap();
-        } else {
-            ThreadLocal<InternalThreadLocalMap> slowThreadLocalMap = UnpaddedInternalThreadLocalMap.slowThreadLocalMap;
-            if (slowThreadLocalMap == null) {
-                threadLocalMap = null;
-            } else {
-                threadLocalMap = slowThreadLocalMap.get();
-            }
+            return ((FastThreadLocalThread) thread).threadLocalMap();
         }
-        return threadLocalMap;
+        return slowThreadLocalMap.get();
     }
 
     public static InternalThreadLocalMap get() {
@@ -71,11 +66,6 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
 
     private static InternalThreadLocalMap slowGet() {
         ThreadLocal<InternalThreadLocalMap> slowThreadLocalMap = UnpaddedInternalThreadLocalMap.slowThreadLocalMap;
-        if (slowThreadLocalMap == null) {
-            UnpaddedInternalThreadLocalMap.slowThreadLocalMap =
-                    slowThreadLocalMap = new ThreadLocal<InternalThreadLocalMap>();
-        }
-
         InternalThreadLocalMap ret = slowThreadLocalMap.get();
         if (ret == null) {
             ret = new InternalThreadLocalMap();
@@ -89,15 +79,12 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
         if (thread instanceof FastThreadLocalThread) {
             ((FastThreadLocalThread) thread).setThreadLocalMap(null);
         } else {
-            ThreadLocal<InternalThreadLocalMap> slowThreadLocalMap = UnpaddedInternalThreadLocalMap.slowThreadLocalMap;
-            if (slowThreadLocalMap != null) {
-                slowThreadLocalMap.remove();
-            }
+            slowThreadLocalMap.remove();
         }
     }
 
     public static void destroy() {
-        slowThreadLocalMap = null;
+        slowThreadLocalMap.remove();
     }
 
     public static int nextVariableIndex() {
@@ -160,6 +147,9 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
         if (charsetDecoderCache != null) {
             count ++;
         }
+        if (arrayList != null) {
+            count ++;
+        }
 
         for (Object o: indexedVariables) {
             if (o != UNSET) {
@@ -173,13 +163,17 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
     }
 
     public StringBuilder stringBuilder() {
-        StringBuilder builder = stringBuilder;
-        if (builder == null) {
-            stringBuilder = builder = new StringBuilder(512);
+        final int stringBuilderCapacity = 1024;
+        if (stringBuilder == null) {
+            stringBuilder = new StringBuilder(stringBuilderCapacity);
         } else {
-            builder.setLength(0);
+            if (stringBuilder.capacity() > stringBuilderCapacity) {
+                stringBuilder.setLength(stringBuilderCapacity);
+                stringBuilder.trimToSize();
+            }
+            stringBuilder.setLength(0);
         }
-        return builder;
+        return stringBuilder;
     }
 
     public Map<Charset, CharsetEncoder> charsetEncoderCache() {
@@ -196,6 +190,22 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
             charsetDecoderCache = cache = new IdentityHashMap<Charset, CharsetDecoder>();
         }
         return cache;
+    }
+
+    public <E> ArrayList<E> arrayList() {
+        return arrayList(DEFAULT_ARRAY_LIST_INITIAL_CAPACITY);
+    }
+
+    @SuppressWarnings("unchecked")
+    public <E> ArrayList<E> arrayList(int minCapacity) {
+        ArrayList<E> list = (ArrayList<E>) arrayList;
+        if (list == null) {
+            arrayList = new ArrayList<Object>(minCapacity);
+            return (ArrayList<E>) arrayList;
+        }
+        list.clear();
+        list.ensureCapacity(minCapacity);
+        return list;
     }
 
     public int futureListenerStackDepth() {

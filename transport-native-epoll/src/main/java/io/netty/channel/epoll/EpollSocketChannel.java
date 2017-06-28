@@ -16,22 +16,24 @@
 package io.netty.channel.epoll;
 
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelPromise;
-import io.netty.channel.EventLoop;
+import io.netty.channel.ChannelException;
 import io.netty.channel.socket.ServerSocketChannel;
 import io.netty.channel.socket.SocketChannel;
-import io.netty.channel.unix.FileDescriptor;
 import io.netty.util.concurrent.GlobalEventExecutor;
-import io.netty.util.internal.OneTimeTask;
+import io.netty.util.internal.PlatformDependent;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.net.UnknownHostException;
+import java.nio.channels.AlreadyConnectedException;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.Executor;
+
+import static io.netty.channel.epoll.LinuxSocket.newSocketStream;
 
 /**
  * {@link SocketChannel} implementation that uses linux EPOLL Edge-Triggered Mode for
@@ -43,15 +45,17 @@ public final class EpollSocketChannel extends AbstractEpollStreamChannel impleme
 
     private volatile InetSocketAddress local;
     private volatile InetSocketAddress remote;
+    private InetSocketAddress requestedRemote;
+
     private volatile Collection<InetAddress> tcpMd5SigAddresses = Collections.emptyList();
 
-    EpollSocketChannel(Channel parent, int fd, InetSocketAddress remote) {
+    EpollSocketChannel(Channel parent, LinuxSocket fd, InetSocketAddress remote) {
         super(parent, fd);
         config = new EpollSocketChannelConfig(this);
         // Directly cache the remote and local addresses
         // See https://github.com/netty/netty/issues/2359
         this.remote = remote;
-        local = Native.localAddress(fd);
+        local = fd.localAddress();
 
         if (parent instanceof EpollServerSocketChannel) {
             tcpMd5SigAddresses = ((EpollServerSocketChannel) parent).tcpMd5SigAddresses();
@@ -59,21 +63,26 @@ public final class EpollSocketChannel extends AbstractEpollStreamChannel impleme
     }
 
     public EpollSocketChannel() {
-        super(Native.socketStreamFd());
+        super(newSocketStream(), false);
         config = new EpollSocketChannelConfig(this);
     }
 
-    /**
-     * Creates a new {@link EpollSocketChannel} from an existing {@link FileDescriptor}.
-     */
-    public EpollSocketChannel(FileDescriptor fd) {
+    public EpollSocketChannel(int fd) {
         super(fd);
-        config = new EpollSocketChannelConfig(this);
-
         // As we create an EpollSocketChannel from a FileDescriptor we should try to obtain the remote and local
         // address from it. This is needed as the FileDescriptor may be bound/connected already.
-        remote = Native.remoteAddress(fd.intValue());
-        local = Native.localAddress(fd.intValue());
+        remote = socket.remoteAddress();
+        local = socket.localAddress();
+        config = new EpollSocketChannelConfig(this);
+    }
+
+    EpollSocketChannel(LinuxSocket fd, boolean active) {
+        super(fd, active);
+        // As we create an EpollSocketChannel from a FileDescriptor we should try to obtain the remote and local
+        // address from it. This is needed as the FileDescriptor may be bound/connected already.
+        remote = fd.remoteAddress();
+        local = fd.localAddress();
+        config = new EpollSocketChannelConfig(this);
     }
 
     /**
@@ -88,8 +97,12 @@ public final class EpollSocketChannel extends AbstractEpollStreamChannel impleme
      * See <a href="http://linux.die.net/man/7/tcp">man 7 tcp</a>.
      */
     public EpollTcpInfo tcpInfo(EpollTcpInfo info) {
-        Native.tcpInfo(fd().intValue(), info);
-        return info;
+        try {
+            socket.getTcpInfo(info);
+            return info;
+        } catch (IOException e) {
+            throw new ChannelException(e);
+        }
     }
 
     @Override
@@ -109,69 +122,19 @@ public final class EpollSocketChannel extends AbstractEpollStreamChannel impleme
 
     @Override
     protected SocketAddress remoteAddress0() {
-        if (remote == null) {
-            // Remote address not know, try to get it now.
-            InetSocketAddress address = Native.remoteAddress(fd().intValue());
-            if (address != null) {
-                remote = address;
-            }
-            return address;
-        }
         return remote;
     }
 
     @Override
     protected void doBind(SocketAddress local) throws Exception {
         InetSocketAddress localAddress = (InetSocketAddress) local;
-        int fd = fd().intValue();
-        Native.bind(fd, localAddress);
-        this.local = Native.localAddress(fd);
+        socket.bind(localAddress);
+        this.local = socket.localAddress();
     }
 
     @Override
     public EpollSocketChannelConfig config() {
         return config;
-    }
-
-    @Override
-    public boolean isInputShutdown() {
-        return isInputShutdown0();
-    }
-
-    @Override
-    public boolean isOutputShutdown() {
-        return isOutputShutdown0();
-    }
-
-    @Override
-    public ChannelFuture shutdownOutput() {
-        return shutdownOutput(newPromise());
-    }
-
-    @Override
-    public ChannelFuture shutdownOutput(final ChannelPromise promise) {
-        Executor closeExecutor = ((EpollSocketChannelUnsafe) unsafe()).closeExecutor();
-        if (closeExecutor != null) {
-            closeExecutor.execute(new OneTimeTask() {
-                @Override
-                public void run() {
-                    shutdownOutput0(promise);
-                }
-            });
-        } else {
-            EventLoop loop = eventLoop();
-            if (loop.inEventLoop()) {
-                shutdownOutput0(promise);
-            } else {
-                loop.execute(new OneTimeTask() {
-                    @Override
-                    public void run() {
-                        shutdownOutput0(promise);
-                    }
-                });
-            }
-        }
-        return promise;
     }
 
     @Override
@@ -184,38 +147,88 @@ public final class EpollSocketChannel extends AbstractEpollStreamChannel impleme
         return new EpollSocketChannelUnsafe();
     }
 
+    private static InetSocketAddress computeRemoteAddr(InetSocketAddress remoteAddr, InetSocketAddress osRemoteAddr) {
+        if (osRemoteAddr != null) {
+            if (PlatformDependent.javaVersion() >= 7) {
+                try {
+                    // Only try to construct a new InetSocketAddress if we using java >= 7 as getHostString() does not
+                    // exists in earlier releases and so the retrieval of the hostname could block the EventLoop if a
+                    // reverse lookup would be needed.
+                    return new InetSocketAddress(InetAddress.getByAddress(remoteAddr.getHostString(),
+                            osRemoteAddr.getAddress().getAddress()),
+                            osRemoteAddr.getPort());
+                } catch (UnknownHostException ignore) {
+                    // Should never happen but fallback to osRemoteAddr anyway.
+                }
+            }
+            return osRemoteAddr;
+        }
+        return remoteAddr;
+    }
+
     @Override
     protected boolean doConnect(SocketAddress remoteAddress, SocketAddress localAddress) throws Exception {
         if (localAddress != null) {
             checkResolvable((InetSocketAddress) localAddress);
         }
-        checkResolvable((InetSocketAddress) remoteAddress);
-        int fd = fd().intValue();
+        InetSocketAddress remoteAddr = (InetSocketAddress) remoteAddress;
+        checkResolvable(remoteAddr);
+
+        if (remote != null) {
+            // Check if already connected before trying to connect. This is needed as connect(...) will not return -1
+            // and set errno to EISCONN if a previous connect(...) attempt was setting errno to EINPROGRESS and finished
+            // later.
+            throw new AlreadyConnectedException();
+        }
+
         boolean connected = super.doConnect(remoteAddress, localAddress);
         if (connected) {
-            remote = (InetSocketAddress) remoteAddress;
-            return true;
+            remote = computeRemoteAddr(remoteAddr, socket.remoteAddress());
+        } else {
+            // Store for later usage in doFinishConnect()
+            requestedRemote = remoteAddr;
         }
-        // We always need to set the localAddress even if not connected yet
+        // We always need to set the localAddress even if not connected yet as the bind already took place.
         //
         // See https://github.com/netty/netty/issues/3463
-        local = Native.localAddress(fd);
+        local = socket.localAddress();
         return connected;
     }
 
     private final class EpollSocketChannelUnsafe extends EpollStreamUnsafe {
         @Override
-        protected Executor closeExecutor() {
-            // Check isOpen() first as otherwise it will throw a RuntimeException
-            // when call getSoLinger() as the fd is not valid anymore.
-            if (isOpen() && config().getSoLinger() > 0) {
-                return GlobalEventExecutor.INSTANCE;
+        protected Executor prepareToClose() {
+            try {
+                // Check isOpen() first as otherwise it will throw a RuntimeException
+                // when call getSoLinger() as the fd is not valid anymore.
+                if (isOpen() && config().getSoLinger() > 0) {
+                    // We need to cancel this key of the channel so we may not end up in a eventloop spin
+                    // because we try to read or write until the actual close happens which may be later due
+                    // SO_LINGER handling.
+                    // See https://github.com/netty/netty/issues/4449
+                    ((EpollEventLoop) eventLoop()).remove(EpollSocketChannel.this);
+                    return GlobalEventExecutor.INSTANCE;
+                }
+            } catch (Throwable ignore) {
+                // Ignore the error as the underlying channel may be closed in the meantime and so
+                // getSoLinger() may produce an exception. In this case we just return null.
+                // See https://github.com/netty/netty/issues/4449
             }
             return null;
         }
+
+        @Override
+        boolean doFinishConnect() throws Exception {
+            if (super.doFinishConnect()) {
+                remote = computeRemoteAddr(requestedRemote, socket.remoteAddress());
+                requestedRemote = null;
+                return true;
+            }
+            return false;
+        }
     }
 
-    void setTcpMd5Sig(Map<InetAddress, byte[]> keys) {
+    void setTcpMd5Sig(Map<InetAddress, byte[]> keys) throws IOException {
         this.tcpMd5SigAddresses = TcpMd5Util.newTcpMd5Sigs(this, tcpMd5SigAddresses, keys);
     }
 }

@@ -16,40 +16,47 @@
 
 package io.netty.resolver.dns;
 
+import static io.netty.util.internal.ObjectUtil.checkNotNull;
+
 import io.netty.channel.EventLoop;
 import io.netty.util.concurrent.ScheduledFuture;
+import io.netty.util.internal.UnstableApi;
 
 import java.net.InetAddress;
 import java.util.concurrent.TimeUnit;
 
-final class DnsCacheEntry {
+/**
+ * Entry in {@link DnsCache}.
+ */
+@UnstableApi
+public final class DnsCacheEntry {
 
     private final String hostname;
     private final InetAddress address;
     private final Throwable cause;
     private volatile ScheduledFuture<?> expirationFuture;
 
-    DnsCacheEntry(String hostname, InetAddress address) {
-        this.hostname = hostname;
-        this.address = address;
+    public DnsCacheEntry(String hostname, InetAddress address) {
+        this.hostname = checkNotNull(hostname, "hostname");
+        this.address = checkNotNull(address, "address");
         cause = null;
     }
 
-    DnsCacheEntry(String hostname, Throwable cause) {
-        this.hostname = hostname;
-        this.cause = cause;
+    public DnsCacheEntry(String hostname, Throwable cause) {
+        this.hostname = checkNotNull(hostname, "hostname");
+        this.cause = checkNotNull(cause, "cause");
         address = null;
     }
 
-    String hostname() {
+    public String hostname() {
         return hostname;
     }
 
-    InetAddress address() {
+    public InetAddress address() {
         return address;
     }
 
-    Throwable cause() {
+    public Throwable cause() {
         return cause;
     }
 

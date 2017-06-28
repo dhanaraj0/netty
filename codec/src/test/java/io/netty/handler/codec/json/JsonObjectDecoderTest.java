@@ -88,6 +88,51 @@ public class JsonObjectDecoderTest {
     }
 
     @Test
+    public void testBackslashInString1() {
+        EmbeddedChannel ch = new EmbeddedChannel(new JsonObjectDecoder());
+        // {"foo" : "bar\""}
+        String json = "{\"foo\" : \"bar\\\"\"}";
+        System.out.println(json);
+        ch.writeInbound(Unpooled.copiedBuffer(json, CharsetUtil.UTF_8));
+
+        ByteBuf res = ch.readInbound();
+        assertEquals(json, res.toString(CharsetUtil.UTF_8));
+        res.release();
+
+        assertFalse(ch.finish());
+    }
+
+    @Test
+    public void testBackslashInString2() {
+        EmbeddedChannel ch = new EmbeddedChannel(new JsonObjectDecoder());
+        // {"foo" : "bar\\"}
+        String json = "{\"foo\" : \"bar\\\\\"}";
+        System.out.println(json);
+        ch.writeInbound(Unpooled.copiedBuffer(json, CharsetUtil.UTF_8));
+
+        ByteBuf res = ch.readInbound();
+        assertEquals(json, res.toString(CharsetUtil.UTF_8));
+        res.release();
+
+        assertFalse(ch.finish());
+    }
+
+    @Test
+    public void testBackslashInString3() {
+        EmbeddedChannel ch = new EmbeddedChannel(new JsonObjectDecoder());
+        // {"foo" : "bar\\\""}
+        String json = "{\"foo\" : \"bar\\\\\\\"\"}";
+        System.out.println(json);
+        ch.writeInbound(Unpooled.copiedBuffer(json, CharsetUtil.UTF_8));
+
+        ByteBuf res = ch.readInbound();
+        assertEquals(json, res.toString(CharsetUtil.UTF_8));
+        res.release();
+
+        assertFalse(ch.finish());
+    }
+
+    @Test
     public void testMultipleJsonObjectsInOneWrite() {
         EmbeddedChannel ch = new EmbeddedChannel(new JsonObjectDecoder());
 
@@ -227,6 +272,38 @@ public class JsonObjectDecoderTest {
         res.release();
         res = ch.readInbound();
         assertEquals(object, res.toString(CharsetUtil.UTF_8));
+        res.release();
+
+        assertFalse(ch.finish());
+    }
+
+    @Test
+    public void testCorruptedFrameException() {
+        final String part1 = "{\"a\":{\"b\":{\"c\":{ \"d\":\"27301\", \"med\":\"d\", \"path\":\"27310\"} }," +
+                " \"status\":\"OK\" } }{\"";
+        final String part2 = "a\":{\"b\":{\"c\":{\"ory\":[{\"competi\":[{\"event\":[{" + "\"externalI\":{\"external\"" +
+                ":[{\"id\":\"O\"} ]";
+
+        EmbeddedChannel ch = new EmbeddedChannel(new JsonObjectDecoder());
+
+        ByteBuf res;
+
+        ch.writeInbound(Unpooled.copiedBuffer(part1, CharsetUtil.UTF_8));
+        res = ch.readInbound();
+        assertEquals("{\"a\":{\"b\":{\"c\":{ \"d\":\"27301\", \"med\":\"d\", \"path\":\"27310\"} }, " +
+                "\"status\":\"OK\" } }", res.toString(CharsetUtil.UTF_8));
+        res.release();
+
+        ch.writeInbound(Unpooled.copiedBuffer(part2, CharsetUtil.UTF_8));
+        res = ch.readInbound();
+
+        assertNull(res);
+
+        ch.writeInbound(Unpooled.copiedBuffer("}}]}]}]}}}}", CharsetUtil.UTF_8));
+        res = ch.readInbound();
+
+        assertEquals("{\"a\":{\"b\":{\"c\":{\"ory\":[{\"competi\":[{\"event\":[{" + "\"externalI\":{" +
+                "\"external\":[{\"id\":\"O\"} ]}}]}]}]}}}}", res.toString(CharsetUtil.UTF_8));
         res.release();
 
         assertFalse(ch.finish());

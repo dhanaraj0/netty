@@ -47,6 +47,7 @@ public abstract class HttpContentDecoder extends MessageToMessageDecoder<HttpObj
 
     static final String IDENTITY = HttpHeaderValues.IDENTITY.toString();
 
+    protected ChannelHandlerContext ctx;
     private EmbeddedChannel decoder;
     private boolean continueResponse;
 
@@ -97,11 +98,16 @@ public abstract class HttpContentDecoder extends MessageToMessageDecoder<HttpObj
             // the correct value can be set only after all chunks are processed/decoded.
             // If buffering is not an issue, add HttpObjectAggregator down the chain, it will set the header.
             // Otherwise, rely on LastHttpContent message.
-            headers.remove(HttpHeaderNames.CONTENT_LENGTH);
+            if (headers.contains(HttpHeaderNames.CONTENT_LENGTH)) {
+                headers.remove(HttpHeaderNames.CONTENT_LENGTH);
+                headers.set(HttpHeaderNames.TRANSFER_ENCODING, HttpHeaderValues.CHUNKED);
+            }
+            // Either it is already chunked or EOF terminated.
+            // See https://github.com/netty/netty/issues/5892
 
             // set new content encoding,
             CharSequence targetContentEncoding = getTargetContentEncoding(contentEncoding);
-            if (HttpHeaderValues.IDENTITY.equals(targetContentEncoding)) {
+            if (HttpHeaderValues.IDENTITY.contentEquals(targetContentEncoding)) {
                 // Do NOT set the 'Content-Encoding' header if the target encoding is 'identity'
                 // as per: http://tools.ietf.org/html/rfc2616#section-14.11
                 headers.remove(HttpHeaderNames.CONTENT_ENCODING);
@@ -197,6 +203,12 @@ public abstract class HttpContentDecoder extends MessageToMessageDecoder<HttpObj
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         cleanup();
         super.channelInactive(ctx);
+    }
+
+    @Override
+    public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
+        this.ctx = ctx;
+        super.handlerAdded(ctx);
     }
 
     private void cleanup() {

@@ -38,7 +38,7 @@ import java.util.List;
  * {@link ByteBuf} heapBuffer    = buffer(128);
  * {@link ByteBuf} directBuffer  = directBuffer(256);
  * {@link ByteBuf} wrappedBuffer = wrappedBuffer(new byte[128], new byte[256]);
- * {@link ByteBuf} copiedBuffe r = copiedBuffer({@link ByteBuffer}.allocate(128));
+ * {@link ByteBuf} copiedBuffer  = copiedBuffer({@link ByteBuffer}.allocate(128));
  * </pre>
  *
  * <h3>Allocating a new buffer</h3>
@@ -183,7 +183,7 @@ public final class Unpooled {
         if (!buffer.hasRemaining()) {
             return EMPTY_BUFFER;
         }
-        if (buffer.hasArray()) {
+        if (!buffer.isDirect() && buffer.hasArray()) {
             return wrappedBuffer(
                     buffer.array(),
                     buffer.arrayOffset() + buffer.position(),
@@ -208,14 +208,26 @@ public final class Unpooled {
     }
 
     /**
+     * Creates a new buffer which wraps the specified memory address. If {@code doFree} is true the
+     * memoryAddress will automatically be freed once the reference count of the {@link ByteBuf} reaches {@code 0}.
+     */
+    public static ByteBuf wrappedBuffer(long memoryAddress, int size, boolean doFree) {
+        return new WrappedUnpooledUnsafeDirectByteBuf(ALLOC, memoryAddress, size, doFree);
+    }
+
+    /**
      * Creates a new buffer which wraps the specified buffer's readable bytes.
      * A modification on the specified buffer's content will be visible to the
      * returned buffer.
+     * @param buffer The buffer to wrap. Reference count ownership of this variable is transfered to this method.
+     * @return The readable portion of the {@code buffer}, or an empty buffer if there is no readable portion.
+     * The caller is responsible for releasing this buffer.
      */
     public static ByteBuf wrappedBuffer(ByteBuf buffer) {
         if (buffer.isReadable()) {
             return buffer.slice();
         } else {
+            buffer.release();
             return EMPTY_BUFFER;
         }
     }
@@ -226,16 +238,18 @@ public final class Unpooled {
      * content will be visible to the returned buffer.
      */
     public static ByteBuf wrappedBuffer(byte[]... arrays) {
-        return wrappedBuffer(16, arrays);
+        return wrappedBuffer(AbstractByteBufAllocator.DEFAULT_MAX_COMPONENTS, arrays);
     }
 
     /**
      * Creates a new big-endian composite buffer which wraps the readable bytes of the
      * specified buffers without copying them.  A modification on the content
      * of the specified buffers will be visible to the returned buffer.
+     * @param buffers The buffers to wrap. Reference count ownership of all variables is transfered to this method.
+     * @return The readable portion of the {@code buffers}. The caller is responsible for releasing this buffer.
      */
     public static ByteBuf wrappedBuffer(ByteBuf... buffers) {
-        return wrappedBuffer(16, buffers);
+        return wrappedBuffer(AbstractByteBufAllocator.DEFAULT_MAX_COMPONENTS, buffers);
     }
 
     /**
@@ -244,7 +258,7 @@ public final class Unpooled {
      * specified buffers will be visible to the returned buffer.
      */
     public static ByteBuf wrappedBuffer(ByteBuffer... buffers) {
-        return wrappedBuffer(16, buffers);
+        return wrappedBuffer(AbstractByteBufAllocator.DEFAULT_MAX_COMPONENTS, buffers);
     }
 
     /**
@@ -285,22 +299,32 @@ public final class Unpooled {
      * Creates a new big-endian composite buffer which wraps the readable bytes of the
      * specified buffers without copying them.  A modification on the content
      * of the specified buffers will be visible to the returned buffer.
+     * @param maxNumComponents Advisement as to how many independent buffers are allowed to exist before
+     * consolidation occurs.
+     * @param buffers The buffers to wrap. Reference count ownership of all variables is transfered to this method.
+     * @return The readable portion of the {@code buffers}. The caller is responsible for releasing this buffer.
      */
     public static ByteBuf wrappedBuffer(int maxNumComponents, ByteBuf... buffers) {
         switch (buffers.length) {
         case 0:
             break;
         case 1:
-            if (buffers[0].isReadable()) {
-                return wrappedBuffer(buffers[0].order(BIG_ENDIAN));
+            ByteBuf buffer = buffers[0];
+            if (buffer.isReadable()) {
+                return wrappedBuffer(buffer.order(BIG_ENDIAN));
+            } else {
+                buffer.release();
             }
             break;
         default:
-            for (ByteBuf b: buffers) {
-                if (b.isReadable()) {
-                    return new CompositeByteBuf(ALLOC, false, maxNumComponents, buffers);
+            for (int i = 0; i < buffers.length; i++) {
+                ByteBuf buf = buffers[i];
+                if (buf.isReadable()) {
+                    return new CompositeByteBuf(ALLOC, false, maxNumComponents, buffers, i, buffers.length);
                 }
+                buf.release();
             }
+            break;
         }
         return EMPTY_BUFFER;
     }
@@ -343,7 +367,7 @@ public final class Unpooled {
      * Returns a new big-endian composite buffer with no components.
      */
     public static CompositeByteBuf compositeBuffer() {
-        return compositeBuffer(16);
+        return compositeBuffer(AbstractByteBufAllocator.DEFAULT_MAX_COMPONENTS);
     }
 
     /**
@@ -651,7 +675,7 @@ public final class Unpooled {
     }
 
     private static ByteBuf copiedBuffer(CharBuffer buffer, Charset charset) {
-        return ByteBufUtil.encodeString0(ALLOC, true, buffer, charset);
+        return ByteBufUtil.encodeString0(ALLOC, true, buffer, charset, 0);
     }
 
     /**
@@ -659,7 +683,10 @@ public final class Unpooled {
      * on the specified {@code buffer}.  The new buffer has the same
      * {@code readerIndex} and {@code writerIndex} with the specified
      * {@code buffer}.
+     *
+     * @deprecated Use {@link ByteBuf#asReadOnly()}.
      */
+    @Deprecated
     public static ByteBuf unmodifiableBuffer(ByteBuf buffer) {
         ByteOrder endianness = buffer.order();
         if (endianness == BIG_ENDIAN) {

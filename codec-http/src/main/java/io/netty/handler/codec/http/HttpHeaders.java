@@ -17,8 +17,10 @@ package io.netty.handler.codec.http;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
+import io.netty.handler.codec.DateFormatter;
 import io.netty.handler.codec.Headers;
 import io.netty.util.AsciiString;
+import io.netty.util.CharsetUtil;
 
 import java.text.ParseException;
 import java.util.Calendar;
@@ -358,6 +360,10 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     @Deprecated
     public static final class Values {
         /**
+         * {@code "application/json"}
+         */
+        public static final String APPLICATION_JSON = "application/json";
+        /**
          * {@code "application/x-www-form-urlencoded"}
          */
         public static final String APPLICATION_X_WWW_FORM_URLENCODED =
@@ -406,6 +412,10 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
          * {@code "gzip"}
          */
         public static final String GZIP = "gzip";
+        /**
+         * {@code "gzip,deflate"}
+         */
+        public static final String GZIP_DEFLATE = "gzip,deflate";
         /**
          * {@code "identity"}
          */
@@ -532,8 +542,6 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
 
     /**
      * @deprecated Use {@link #get(CharSequence)} instead.
-     *
-     * @see {@link #getHeader(HttpMessage, CharSequence)}
      */
     @Deprecated
     public static String getHeader(HttpMessage message, String name) {
@@ -557,7 +565,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #get(CharSequence, String)} instead.
      *
-     * @see {@link #getHeader(HttpMessage, CharSequence, String)}
+     * @see #getHeader(HttpMessage, CharSequence, String)
      */
     @Deprecated
     public static String getHeader(HttpMessage message, String name, String defaultValue) {
@@ -582,7 +590,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #set(CharSequence, Object)} instead.
      *
-     * @see {@link #setHeader(HttpMessage, CharSequence, Object)}
+     * @see #setHeader(HttpMessage, CharSequence, Object)
      */
     @Deprecated
     public static void setHeader(HttpMessage message, String name, Object value) {
@@ -607,7 +615,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #set(CharSequence, Iterable)} instead.
      *
-     * @see {@link #setHeader(HttpMessage, CharSequence, Iterable)}
+     * @see #setHeader(HttpMessage, CharSequence, Iterable)
      */
     @Deprecated
     public static void setHeader(HttpMessage message, String name, Iterable<?> values) {
@@ -638,7 +646,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #add(CharSequence, Object)} instead.
      *
-     * @see {@link #addHeader(HttpMessage, CharSequence, Object)}
+     * @see #addHeader(HttpMessage, CharSequence, Object)
      */
     @Deprecated
     public static void addHeader(HttpMessage message, String name, Object value) {
@@ -662,7 +670,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #remove(CharSequence)} instead.
      *
-     * @see {@link #removeHeader(HttpMessage, CharSequence)}
+     * @see #removeHeader(HttpMessage, CharSequence)
      */
     @Deprecated
     public static void removeHeader(HttpMessage message, String name) {
@@ -692,7 +700,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #getInt(CharSequence)} instead.
      *
-     * @see {@link #getIntHeader(HttpMessage, CharSequence)}
+     * @see #getIntHeader(HttpMessage, CharSequence)
      */
     @Deprecated
     public static int getIntHeader(HttpMessage message, String name) {
@@ -722,7 +730,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #getInt(CharSequence, int)} instead.
      *
-     * @see {@link #getIntHeader(HttpMessage, CharSequence, int)}
+     * @see #getIntHeader(HttpMessage, CharSequence, int)
      */
     @Deprecated
     public static int getIntHeader(HttpMessage message, String name, int defaultValue) {
@@ -747,7 +755,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #setInt(CharSequence, int)} instead.
      *
-     * @see {@link #setIntHeader(HttpMessage, CharSequence, int)}
+     * @see #setIntHeader(HttpMessage, CharSequence, int)
      */
     @Deprecated
     public static void setIntHeader(HttpMessage message, String name, int value) {
@@ -768,7 +776,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #set(CharSequence, Iterable)} instead.
      *
-     * @see {@link #setIntHeader(HttpMessage, CharSequence, Iterable)}
+     * @see #setIntHeader(HttpMessage, CharSequence, Iterable)
      */
     @Deprecated
     public static void setIntHeader(HttpMessage message, String name, Iterable<Integer> values) {
@@ -789,7 +797,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #add(CharSequence, Iterable)} instead.
      *
-     * @see {@link #addIntHeader(HttpMessage, CharSequence, int)}
+     * @see #addIntHeader(HttpMessage, CharSequence, int)
      */
     @Deprecated
     public static void addIntHeader(HttpMessage message, String name, int value) {
@@ -809,7 +817,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #getTimeMillis(CharSequence)} instead.
      *
-     * @see {@link #getDateHeader(HttpMessage, CharSequence)}
+     * @see #getDateHeader(HttpMessage, CharSequence)
      */
     @Deprecated
     public static Date getDateHeader(HttpMessage message, String name) throws ParseException {
@@ -833,13 +841,17 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
         if (value == null) {
             throw new ParseException("header not found: " + name, 0);
         }
-        return HttpHeaderDateFormat.get().parse(value);
+        Date date = DateFormatter.parseHttpDate(value);
+        if (date == null) {
+            throw new ParseException("header can't be parsed into a Date: " + value, 0);
+        }
+        return date;
     }
 
     /**
      * @deprecated Use {@link #getTimeMillis(CharSequence, long)} instead.
      *
-     * @see {@link #getDateHeader(HttpMessage, CharSequence, Date)}
+     * @see #getDateHeader(HttpMessage, CharSequence, Date)
      */
     @Deprecated
     public static Date getDateHeader(HttpMessage message, String name, Date defaultValue) {
@@ -859,21 +871,14 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     @Deprecated
     public static Date getDateHeader(HttpMessage message, CharSequence name, Date defaultValue) {
         final String value = getHeader(message, name);
-        if (value == null) {
-            return defaultValue;
-        }
-
-        try {
-            return HttpHeaderDateFormat.get().parse(value);
-        } catch (ParseException ignored) {
-            return defaultValue;
-        }
+        Date date = DateFormatter.parseHttpDate(value);
+        return date != null ? date : defaultValue;
     }
 
     /**
      * @deprecated Use {@link #set(CharSequence, Object)} instead.
      *
-     * @see {@link #setDateHeader(HttpMessage, CharSequence, Date)}
+     * @see #setDateHeader(HttpMessage, CharSequence, Date)
      */
     @Deprecated
     public static void setDateHeader(HttpMessage message, String name, Date value) {
@@ -891,7 +896,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     @Deprecated
     public static void setDateHeader(HttpMessage message, CharSequence name, Date value) {
         if (value != null) {
-            message.headers().set(name, HttpHeaderDateFormat.get().format(value));
+            message.headers().set(name, DateFormatter.format(value));
         } else {
             message.headers().set(name, null);
         }
@@ -900,7 +905,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #set(CharSequence, Iterable)} instead.
      *
-     * @see {@link #setDateHeader(HttpMessage, CharSequence, Iterable)}
+     * @see #setDateHeader(HttpMessage, CharSequence, Iterable)
      */
     @Deprecated
     public static void setDateHeader(HttpMessage message, String name, Iterable<Date> values) {
@@ -923,7 +928,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #add(CharSequence, Object)} instead.
      *
-     * @see {@link #addDateHeader(HttpMessage, CharSequence, Date)}
+     * @see #addDateHeader(HttpMessage, CharSequence, Date)
      */
     @Deprecated
     public static void addDateHeader(HttpMessage message, String name, Date value) {
@@ -1010,7 +1015,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     /**
      * @deprecated Use {@link #set(CharSequence, Object)} instead.
      *
-     * @see {@link #setHost(HttpMessage, CharSequence)}
+     * @see #setHost(HttpMessage, CharSequence)
      */
     @Deprecated
     public static void setHost(HttpMessage message, String value) {
@@ -1089,7 +1094,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
      * @deprecated Use {@link HttpUtil#set100ContinueExpected(HttpMessage, boolean)} instead.
      *
      * Sets or removes the {@code "Expect: 100-continue"} header to / from the
-     * specified message.  If the specified {@code value} is {@code true},
+     * specified message.  If {@code set} is {@code true},
      * the {@code "Expect: 100-continue"} header is set and all other previous
      * {@code "Expect"} headers are removed.  Otherwise, all {@code "Expect"}
      * headers are removed completely.
@@ -1137,26 +1142,19 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     }
 
     /**
-     * @deprecated Use {@link AsciiString#equalsIgnoreCase(CharSequence, CharSequence)} instead.
+     * @deprecated Use {@link AsciiString#contentEqualsIgnoreCase(CharSequence, CharSequence)} instead.
      */
     @Deprecated
     public static boolean equalsIgnoreCase(CharSequence name1, CharSequence name2) {
         return AsciiString.contentEqualsIgnoreCase(name1, name2);
     }
 
-    static void encode(HttpHeaders headers, ByteBuf buf) throws Exception {
-        Iterator<Entry<CharSequence, CharSequence>> iter = headers.iteratorCharSequence();
-        while (iter.hasNext()) {
-            Entry<CharSequence, CharSequence> header = iter.next();
-            HttpHeadersEncoder.encoderHeader(header.getKey(), header.getValue(), buf);
-        }
-    }
-
+    @Deprecated
     public static void encodeAscii(CharSequence seq, ByteBuf buf) {
         if (seq instanceof AsciiString) {
             ByteBufUtil.copy((AsciiString) seq, 0, buf, seq.length());
         } else {
-            HttpUtil.encodeAscii0(seq, buf);
+            buf.writeCharSequence(seq, CharsetUtil.US_ASCII);
         }
     }
 
@@ -1174,10 +1172,8 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     protected HttpHeaders() { }
 
     /**
-     * @deprecated Use {@link #get(CharSequence)}
      * @see #get(CharSequence)
      */
-    @Deprecated
     public abstract String get(String name);
 
     /**
@@ -1271,9 +1267,8 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     public abstract long getTimeMillis(CharSequence name, long defaultValue);
 
     /**
-     * @deprecated Use {@link #getAll(CharSequence)}
+     * @see #getAll(CharSequence)
      */
-    @Deprecated
     public abstract List<String> getAll(String name);
 
     /**
@@ -1289,21 +1284,16 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     }
 
     /**
-     * @deprecated Use {@link #iteratorCharSequence()}
-     * <p>
      * Returns a new {@link List} that contains all headers in this object.  Note that modifying the
      * returned {@link List} will not affect the state of this object.  If you intend to enumerate over the header
      * entries only, use {@link #iterator()} instead, which has much less overhead.
+     * @see #iteratorCharSequence()
      */
-    @Deprecated
     public abstract List<Map.Entry<String, String>> entries();
 
     /**
-     * @deprecated Use {@link #contains(CharSequence)}
-     * <p>
-     * @see {@link #contains(CharSequence)}
+     * @see #contains(CharSequence)
      */
-    @Deprecated
     public abstract boolean contains(String name);
 
     /**
@@ -1347,9 +1337,8 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     public abstract Set<String> names();
 
     /**
-     * @deprecated Use {@link #add(CharSequence, Object)}
+     * @see #add(CharSequence, Object)
      */
-    @Deprecated
     public abstract HttpHeaders add(String name, Object value);
 
     /**
@@ -1370,9 +1359,8 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     }
 
     /**
-     * @deprecated Use {@link #add(CharSequence, Iterable)}
+     * @see #add(CharSequence, Iterable)
      */
-    @Deprecated
     public abstract HttpHeaders add(String name, Iterable<?> values);
 
     /**
@@ -1428,9 +1416,8 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     public abstract HttpHeaders addShort(CharSequence name, short value);
 
     /**
-     * @deprecated Use {@link #set(CharSequence, Object)}
+     * @see #set(CharSequence, Object)
      */
-    @Deprecated
     public abstract HttpHeaders set(String name, Object value);
 
     /**
@@ -1451,9 +1438,8 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     }
 
     /**
-     * @deprecated {@link #set(CharSequence, Iterable)}
+     * @see #set(CharSequence, Iterable)
      */
-    @Deprecated
     public abstract HttpHeaders set(String name, Iterable<?> values);
 
     /**
@@ -1535,9 +1521,8 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     public abstract HttpHeaders setShort(CharSequence name, short value);
 
     /**
-     * @deprecated {@link #remove(CharSequence)}
+     * @see #remove(CharSequence)
      */
-    @Deprecated
     public abstract HttpHeaders remove(String name);
 
     /**
@@ -1558,9 +1543,8 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     public abstract HttpHeaders clear();
 
     /**
-     * @deprecated Use {@link #contains(CharSequence, CharSequence, boolean)}
+     * @see #contains(CharSequence, CharSequence, boolean)
      */
-    @Deprecated
     public boolean contains(String name, String value, boolean ignoreCase) {
         List<String> values = getAll(name);
         if (values.isEmpty()) {
@@ -1574,6 +1558,48 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
                 }
             } else {
                 if (v.equals(value)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns {@code true} if a header with the {@code name} and {@code value} exists, {@code false} otherwise.
+     * This also handles multiple values that are separated with a {@code ,}.
+     * <p>
+     * If {@code ignoreCase} is {@code true} then a case insensitive compare is done on the value.
+     * @param name the name of the header to find
+     * @param value the value of the header to find
+     * @param ignoreCase {@code true} then a case insensitive compare is run to compare values.
+     * otherwise a case sensitive compare is run to compare values.
+     */
+    public boolean containsValue(CharSequence name, CharSequence value, boolean ignoreCase) {
+        List<String> values = getAll(name);
+        if (values.isEmpty()) {
+            return false;
+        }
+
+        for (String v: values) {
+            if (contains(v, value, ignoreCase)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean contains(String value, CharSequence expected, boolean ignoreCase) {
+        String[] parts = value.split(",");
+        if (ignoreCase) {
+            for (String s: parts) {
+                if (AsciiString.contentEqualsIgnoreCase(expected, s.trim())) {
+                    return true;
+                }
+            }
+        } else {
+            for (String s: parts) {
+                if (AsciiString.contentEquals(expected, s.trim())) {
                     return true;
                 }
             }

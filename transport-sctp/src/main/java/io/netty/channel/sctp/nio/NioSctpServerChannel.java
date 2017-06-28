@@ -233,7 +233,7 @@ public class NioSctpServerChannel extends AbstractNioMessageChannel
 
         @Override
         protected void autoReadCleared() {
-            setReadPending(false);
+            clearReadPending();
         }
     }
 }

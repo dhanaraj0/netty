@@ -15,11 +15,20 @@
 package io.netty.handler.codec.http2;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.util.internal.UnstableApi;
 
 /**
  * A {@link Http2FlowController} for controlling the inbound flow of {@code DATA} frames from the remote endpoint.
  */
+@UnstableApi
 public interface Http2LocalFlowController extends Http2FlowController {
+    /**
+     * Sets the writer to be use for sending {@code WINDOW_UPDATE} frames. This must be called before any flow
+     * controlled data is received.
+     *
+     * @param frameWriter the HTTP/2 frame writer.
+     */
+    Http2LocalFlowController frameWriter(Http2FrameWriter frameWriter);
 
     /**
      * Receives an inbound {@code DATA} frame from the remote endpoint and applies flow control policies to it for both
@@ -29,12 +38,12 @@ public interface Http2LocalFlowController extends Http2FlowController {
      * If {@code stream} is {@code null} or closed, flow control should only be applied to the connection window and the
      * bytes are immediately consumed.
      *
-     * @param ctx the context from the handler where the frame was read.
      * @param stream the subject stream for the received frame. The connection stream object must not be used. If {@code
      * stream} is {@code null} or closed, flow control should only be applied to the connection window and the bytes are
      * immediately consumed.
      * @param data payload buffer for the frame.
-     * @param padding the number of padding bytes found at the end of the frame.
+     * @param padding additional bytes that should be added to obscure the true content size. Must be between 0 and
+     *                256 (inclusive).
      * @param endOfStream Indicates whether this is the last frame to be sent from the remote endpoint for this stream.
      * @throws Http2Exception if any flow control errors are encountered.
      */
@@ -68,4 +77,11 @@ public interface Http2LocalFlowController extends Http2FlowController {
      * @return the number of unconsumed bytes for the stream.
      */
     int unconsumedBytes(Http2Stream stream);
+
+    /**
+     * Get the initial flow control window size for the given stream. This quantity is measured in number of bytes. Note
+     * the unavailable window portion can be calculated by {@link #initialWindowSize()} - {@link
+     * #windowSize(Http2Stream)}.
+     */
+    int initialWindowSize(Http2Stream stream);
 }

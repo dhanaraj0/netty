@@ -15,11 +15,13 @@
 package io.netty.handler.codec.http2;
 
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.util.internal.UnstableApi;
 
 /**
  * A {@link Http2FlowController} for controlling the flow of outbound {@code DATA} frames to the remote
  * endpoint.
  */
+@UnstableApi
 public interface Http2RemoteFlowController extends Http2FlowController {
     /**
      * Get the {@link ChannelHandlerContext} for which to apply flow control on.
@@ -40,6 +42,13 @@ public interface Http2RemoteFlowController extends Http2FlowController {
      * @param payload payload to write subject to flow-control accounting and ordering rules.
      */
     void addFlowControlled(Http2Stream stream, FlowControlled payload);
+
+    /**
+     * Determine if {@code stream} has any {@link FlowControlled} frames currently queued.
+     * @param stream the stream to check if it has flow controlled frames.
+     * @return {@code true} if {@code stream} has any {@link FlowControlled} frames currently queued.
+     */
+    boolean hasFlowControlled(Http2Stream stream);
 
     /**
      * Write all data pending in the flow controller up to the flow-control limits.
@@ -73,6 +82,17 @@ public interface Http2RemoteFlowController extends Http2FlowController {
     void channelWritabilityChanged() throws Http2Exception;
 
     /**
+     * Explicitly update the dependency tree. This method is called independently of stream state changes.
+     * @param childStreamId The stream identifier associated with the child stream.
+     * @param parentStreamId The stream identifier associated with the parent stream. May be {@code 0},
+     *                       to make {@code childStreamId} and immediate child of the connection.
+     * @param weight The weight which is used relative to other child streams for {@code parentStreamId}. This value
+     *               must be between 1 and 256 (inclusive).
+     * @param exclusive If {@code childStreamId} should be the exclusive dependency of {@code parentStreamId}.
+     */
+    void updateDependencyTree(int childStreamId, int parentStreamId, short weight, boolean exclusive);
+
+    /**
      * Implementations of this interface are used to progressively write chunks of the underlying
      * payload to the stream. A payload is considered to be fully written if {@link #write} has
      * been called at least once and it's {@link #size} is now zero.
@@ -90,8 +110,8 @@ public interface Http2RemoteFlowController extends Http2FlowController {
         /**
          * Called to indicate that an error occurred before this object could be completely written.
          * <p>
-         * The {@link Http2RemoteFlowController} will make exactly one call to either {@link #error(Throwable)} or
-         * {@link #writeComplete()}.
+         * The {@link Http2RemoteFlowController} will make exactly one call to either
+         * this method or {@link #writeComplete()}.
          * </p>
          *
          * @param ctx The context to use if any communication needs to occur as a result of the error.
@@ -103,8 +123,8 @@ public interface Http2RemoteFlowController extends Http2FlowController {
         /**
          * Called after this object has been successfully written.
          * <p>
-         * The {@link Http2RemoteFlowController} will make exactly one call to either {@link #error(Throwable)} or
-         * {@link #writeComplete()}.
+         * The {@link Http2RemoteFlowController} will make exactly one call to either
+         * this method or {@link #error(ChannelHandlerContext, Throwable)}.
          * </p>
          */
         void writeComplete();
@@ -116,7 +136,7 @@ public interface Http2RemoteFlowController extends Http2FlowController {
          * the payload is fully written, i.e it's size after the write is 0.
          * <p>
          * When an exception is thrown the {@link Http2RemoteFlowController} will make a call to
-         * {@link #error(Throwable)}.
+         * {@link #error(ChannelHandlerContext, Throwable)}.
          * </p>
          *
          * @param ctx The context to use for writing.
@@ -138,18 +158,6 @@ public interface Http2RemoteFlowController extends Http2FlowController {
      * Listener to the number of flow-controlled bytes written per stream.
      */
     interface Listener {
-
-        /**
-         * Report the number of {@code writtenBytes} for a {@code stream}. Called after the
-         * flow-controller has flushed bytes for the given stream.
-         * <p>
-         * This method should not throw. Any thrown exceptions are considered a programming error and are ignored.
-         * @param stream that had bytes written.
-         * @param writtenBytes the number of bytes written for a stream, can be 0 in the case of an
-         *                     empty DATA frame.
-         */
-        void streamWritten(Http2Stream stream, int writtenBytes);
-
         /**
          * Notification that {@link Http2RemoteFlowController#isWritable(Http2Stream)} has changed for {@code stream}.
          * <p>

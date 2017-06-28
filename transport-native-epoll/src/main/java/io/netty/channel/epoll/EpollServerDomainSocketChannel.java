@@ -17,14 +17,15 @@ package io.netty.channel.epoll;
 
 import io.netty.channel.Channel;
 import io.netty.channel.unix.DomainSocketAddress;
-import io.netty.channel.unix.FileDescriptor;
 import io.netty.channel.unix.ServerDomainSocketChannel;
+import io.netty.channel.unix.Socket;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 
 import java.io.File;
 import java.net.SocketAddress;
 
+import static io.netty.channel.epoll.LinuxSocket.newSocketDomain;
 
 public final class EpollServerDomainSocketChannel extends AbstractEpollServerChannel
         implements ServerDomainSocketChannel {
@@ -35,19 +36,24 @@ public final class EpollServerDomainSocketChannel extends AbstractEpollServerCha
     private volatile DomainSocketAddress local;
 
     public EpollServerDomainSocketChannel() {
-        super(Native.socketDomainFd());
+        super(newSocketDomain(), false);
     }
 
-    /**
-     * Creates a new {@link EpollServerDomainSocketChannel} from an existing {@link FileDescriptor}.
-     */
-    public EpollServerDomainSocketChannel(FileDescriptor fd) {
+    public EpollServerDomainSocketChannel(int fd) {
         super(fd);
+    }
+
+    EpollServerDomainSocketChannel(LinuxSocket fd) {
+        super(fd);
+    }
+
+    EpollServerDomainSocketChannel(LinuxSocket fd, boolean active) {
+        super(fd, active);
     }
 
     @Override
     protected Channel newChildChannel(int fd, byte[] addr, int offset, int len) throws Exception {
-        return new EpollDomainSocketChannel(this, fd);
+        return new EpollDomainSocketChannel(this, new Socket(fd));
     }
 
     @Override
@@ -57,10 +63,10 @@ public final class EpollServerDomainSocketChannel extends AbstractEpollServerCha
 
     @Override
     protected void doBind(SocketAddress localAddress) throws Exception {
-        int fd = fd().intValue();
-        Native.bind(fd, localAddress);
-        Native.listen(fd, config.getBacklog());
+        socket.bind(localAddress);
+        socket.listen(config.getBacklog());
         local = (DomainSocketAddress) localAddress;
+        active = true;
     }
 
     @Override

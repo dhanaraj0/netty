@@ -21,6 +21,7 @@ import io.netty.buffer.PoolArena.SizeClass;
 import io.netty.util.Recycler;
 import io.netty.util.Recycler.Handle;
 import io.netty.util.ThreadDeathWatcher;
+import io.netty.util.internal.MathUtil;
 import io.netty.util.internal.PlatformDependent;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
@@ -31,8 +32,9 @@ import java.util.Queue;
 /**
  * Acts a Thread cache for allocations. This implementation is moduled after
  * <a href="http://people.freebsd.org/~jasone/jemalloc/bsdcan2006/jemalloc.pdf">jemalloc</a> and the descripted
- * technics of <a href="https://www.facebook.com/notes/facebook-engineering/scalable-memory-allocation-using-jemalloc/
- * 480222803919">Scalable memory allocation using jemalloc</a>.
+ * technics of
+ * <a href="https://www.facebook.com/notes/facebook-engineering/scalable-memory-allocation-using-jemalloc/480222803919">
+ * Scalable memory allocation using jemalloc</a>.
  */
 final class PoolThreadCache {
 
@@ -54,15 +56,10 @@ final class PoolThreadCache {
     private final int numShiftsNormalHeap;
     private final int freeSweepAllocationThreshold;
 
-    private int allocations;
+    private final Thread deathWatchThread;
+    private final Runnable freeTask;
 
-    private final Thread thread = Thread.currentThread();
-    private final Runnable freeTask = new Runnable() {
-        @Override
-        public void run() {
-            free0();
-        }
-    };
+    private int allocations;
 
     // TODO: Test if adding padding helps under contention
     //private long pad0, pad1, pad2, pad3, pad4, pad5, pad6, pad7;
@@ -76,7 +73,7 @@ final class PoolThreadCache {
         }
         if (freeSweepAllocationThreshold < 1) {
             throw new IllegalArgumentException("freeSweepAllocationThreshold: "
-                    + maxCachedBufferCapacity + " (expected: > 0)");
+                    + freeSweepAllocationThreshold + " (expected: > 0)");
         }
         this.freeSweepAllocationThreshold = freeSweepAllocationThreshold;
         this.heapArena = heapArena;
@@ -90,6 +87,8 @@ final class PoolThreadCache {
             numShiftsNormalDirect = log2(directArena.pageSize);
             normalDirectCaches = createNormalCaches(
                     normalCacheSize, maxCachedBufferCapacity, directArena);
+
+            directArena.numThreadCaches.getAndIncrement();
         } else {
             // No directArea is configured so just null out all caches
             tinySubPageDirectCaches = null;
@@ -107,6 +106,8 @@ final class PoolThreadCache {
             numShiftsNormalHeap = log2(heapArena.pageSize);
             normalHeapCaches = createNormalCaches(
                     normalCacheSize, maxCachedBufferCapacity, heapArena);
+
+            heapArena.numThreadCaches.getAndIncrement();
         } else {
             // No heapArea is configured so just null out all caches
             tinySubPageHeapCaches = null;
@@ -115,9 +116,25 @@ final class PoolThreadCache {
             numShiftsNormalHeap = -1;
         }
 
-        // The thread-local cache will keep a list of pooled buffers which must be returned to
-        // the pool when the thread is not alive anymore.
-        ThreadDeathWatcher.watch(thread, freeTask);
+        // We only need to watch the thread when any cache is used.
+        if (tinySubPageDirectCaches != null || smallSubPageDirectCaches != null || normalDirectCaches != null
+                || tinySubPageHeapCaches != null || smallSubPageHeapCaches != null || normalHeapCaches != null) {
+            freeTask = new Runnable() {
+                @Override
+                public void run() {
+                    free0();
+                }
+            };
+
+            deathWatchThread = Thread.currentThread();
+
+            // The thread-local cache will keep a list of pooled buffers which must be returned to
+            // the pool when the thread is not alive anymore.
+            ThreadDeathWatcher.watch(deathWatchThread, freeTask);
+        } else {
+            freeTask = null;
+            deathWatchThread = null;
+        }
     }
 
     private static <T> MemoryRegionCache<T>[] createSubPageCaches(
@@ -226,7 +243,10 @@ final class PoolThreadCache {
      *  Should be called if the Thread that uses this cache is about to exist to release resources out of the cache
      */
     void free() {
-        ThreadDeathWatcher.unwatch(thread, freeTask);
+        if (freeTask != null) {
+            assert deathWatchThread != null;
+            ThreadDeathWatcher.unwatch(deathWatchThread, freeTask);
+        }
         free0();
     }
 
@@ -239,7 +259,15 @@ final class PoolThreadCache {
                 free(normalHeapCaches);
 
         if (numFreed > 0 && logger.isDebugEnabled()) {
-            logger.debug("Freed {} thread-local buffer(s) from thread: {}", numFreed, thread.getName());
+            logger.debug("Freed {} thread-local buffer(s) from thread: {}", numFreed, Thread.currentThread().getName());
+        }
+
+        if (directArena != null) {
+            directArena.numThreadCaches.getAndDecrement();
+        }
+
+        if (heapArena != null) {
+            heapArena.numThreadCaches.getAndDecrement();
         }
     }
 
@@ -356,23 +384,9 @@ final class PoolThreadCache {
         private int allocations;
 
         MemoryRegionCache(int size, SizeClass sizeClass) {
-            this.size = powerOfTwo(size);
+            this.size = MathUtil.safeFindNextPositivePowerOfTwo(size);
             queue = PlatformDependent.newFixedMpscQueue(this.size);
             this.sizeClass = sizeClass;
-        }
-
-        private static int powerOfTwo(int res) {
-            if (res <= 2) {
-                return 2;
-            }
-            res--;
-            res |= res >> 1;
-            res |= res >> 2;
-            res |= res >> 4;
-            res |= res >> 8;
-            res |= res >> 16;
-            res++;
-            return res;
         }
 
         /**
@@ -458,18 +472,18 @@ final class PoolThreadCache {
         }
 
         static final class Entry<T> {
-            final Handle recyclerHandle;
+            final Handle<Entry<?>> recyclerHandle;
             PoolChunk<T> chunk;
             long handle = -1;
 
-            Entry(Handle recyclerHandle) {
+            Entry(Handle<Entry<?>> recyclerHandle) {
                 this.recyclerHandle = recyclerHandle;
             }
 
             void recycle() {
                 chunk = null;
                 handle = -1;
-                RECYCLER.recycle(this, recyclerHandle);
+                recyclerHandle.recycle(this);
             }
         }
 
@@ -483,8 +497,9 @@ final class PoolThreadCache {
 
         @SuppressWarnings("rawtypes")
         private static final Recycler<Entry> RECYCLER = new Recycler<Entry>() {
+            @SuppressWarnings("unchecked")
             @Override
-            protected Entry newObject(Handle handle) {
+            protected Entry newObject(Handle<Entry> handle) {
                 return new Entry(handle);
             }
         };

@@ -21,6 +21,7 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.ChannelPromise;
@@ -65,11 +66,11 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyBoolean;
-import static org.mockito.Matchers.anyInt;
-import static org.mockito.Matchers.anyShort;
-import static org.mockito.Matchers.eq;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.anyBoolean;
+import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.anyShort;
+import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -89,6 +90,7 @@ public class HttpToHttp2ConnectionHandlerTest {
     private ServerBootstrap sb;
     private Bootstrap cb;
     private Channel serverChannel;
+    private volatile Channel serverConnectedChannel;
     private Channel clientChannel;
     private CountDownLatch requestLatch;
     private CountDownLatch serverSettingsAckLatch;
@@ -103,19 +105,24 @@ public class HttpToHttp2ConnectionHandlerTest {
     @After
     public void teardown() throws Exception {
         if (clientChannel != null) {
-            clientChannel.close().sync();
+            clientChannel.close().syncUninterruptibly();
             clientChannel = null;
         }
         if (serverChannel != null) {
-            serverChannel.close().sync();
+            serverChannel.close().syncUninterruptibly();
             serverChannel = null;
         }
-        Future<?> serverGroup = sb.group().shutdownGracefully(0, 0, MILLISECONDS);
-        Future<?> serverChildGroup = sb.childGroup().shutdownGracefully(0, 0, MILLISECONDS);
-        Future<?> clientGroup = cb.group().shutdownGracefully(0, 0, MILLISECONDS);
-        serverGroup.sync();
-        serverChildGroup.sync();
-        clientGroup.sync();
+        final Channel serverConnectedChannel = this.serverConnectedChannel;
+        if (serverConnectedChannel != null) {
+            serverConnectedChannel.close().syncUninterruptibly();
+            this.serverConnectedChannel = null;
+        }
+        Future<?> serverGroup = sb.config().group().shutdownGracefully(0, 5, SECONDS);
+        Future<?> serverChildGroup = sb.config().childGroup().shutdownGracefully(0, 5, SECONDS);
+        Future<?> clientGroup = cb.config().group().shutdownGracefully(0, 5, SECONDS);
+        serverGroup.syncUninterruptibly();
+        serverChildGroup.syncUninterruptibly();
+        clientGroup.syncUninterruptibly();
     }
 
     @Test
@@ -136,6 +143,27 @@ public class HttpToHttp2ConnectionHandlerTest {
                 .add(new AsciiString("foo"), new AsciiString("goo"))
                 .add(new AsciiString("foo"), new AsciiString("goo2"))
                 .add(new AsciiString("foo2"), new AsciiString("goo2"));
+
+        ChannelPromise writePromise = newPromise();
+        verifyHeadersOnly(http2Headers, writePromise, clientChannel.writeAndFlush(request, writePromise));
+    }
+
+    @Test
+    public void testMultipleCookieEntriesAreCombined() throws Exception {
+        bootstrapEnv(2, 1, 0);
+        final FullHttpRequest request = new DefaultFullHttpRequest(HTTP_1_1, GET,
+                "http://my-user_name@www.example.org:5555/example");
+        final HttpHeaders httpHeaders = request.headers();
+        httpHeaders.setInt(HttpConversionUtil.ExtensionHeaderNames.STREAM_ID.text(), 5);
+        httpHeaders.set(HttpHeaderNames.HOST, "my-user_name@www.example.org:5555");
+        httpHeaders.set(HttpConversionUtil.ExtensionHeaderNames.SCHEME.text(), "http");
+        httpHeaders.set(HttpHeaderNames.COOKIE, "a=b; c=d; e=f");
+        final Http2Headers http2Headers =
+                new DefaultHttp2Headers().method(new AsciiString("GET")).path(new AsciiString("/example"))
+                .authority(new AsciiString("www.example.org:5555")).scheme(new AsciiString("http"))
+                .add(HttpHeaderNames.COOKIE, "a=b")
+                .add(HttpHeaderNames.COOKIE, "c=d")
+                .add(HttpHeaderNames.COOKIE, "e=f");
 
         ChannelPromise writePromise = newPromise();
         verifyHeadersOnly(http2Headers, writePromise, clientChannel.writeAndFlush(request, writePromise));
@@ -472,6 +500,8 @@ public class HttpToHttp2ConnectionHandlerTest {
     }
 
     private void bootstrapEnv(int requestCountDown, int serverSettingsAckCount, int trailersCount) throws Exception {
+        final CountDownLatch prefaceWrittenLatch = new CountDownLatch(1);
+        final CountDownLatch serverChannelLatch = new CountDownLatch(1);
         requestLatch = new CountDownLatch(requestCountDown);
         serverSettingsAckLatch = new CountDownLatch(serverSettingsAckCount);
         trailersLatch = trailersCount == 0 ? null : new CountDownLatch(trailersCount);
@@ -484,13 +514,15 @@ public class HttpToHttp2ConnectionHandlerTest {
         sb.childHandler(new ChannelInitializer<Channel>() {
             @Override
             protected void initChannel(Channel ch) throws Exception {
+                serverConnectedChannel = ch;
                 ChannelPipeline p = ch.pipeline();
                 serverFrameCountDown =
                         new FrameCountDown(serverListener, serverSettingsAckLatch, requestLatch, null, trailersLatch);
-                p.addLast(new HttpToHttp2ConnectionHandler.Builder()
+                p.addLast(new HttpToHttp2ConnectionHandlerBuilder()
                            .server(true)
                            .frameListener(serverFrameCountDown)
                            .build());
+                serverChannelLatch.countDown();
             }
         });
 
@@ -500,12 +532,21 @@ public class HttpToHttp2ConnectionHandlerTest {
             @Override
             protected void initChannel(Channel ch) throws Exception {
                 ChannelPipeline p = ch.pipeline();
-                HttpToHttp2ConnectionHandler handler = new HttpToHttp2ConnectionHandler.Builder()
+                HttpToHttp2ConnectionHandler handler = new HttpToHttp2ConnectionHandlerBuilder()
                         .server(false)
                         .frameListener(clientListener)
                         .gracefulShutdownTimeoutMillis(0)
                         .build();
                 p.addLast(handler);
+                p.addLast(new ChannelInboundHandlerAdapter() {
+                    @Override
+                    public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+                        if (evt instanceof Http2ConnectionPrefaceWrittenEvent) {
+                            prefaceWrittenLatch.countDown();
+                            ctx.pipeline().remove(this);
+                        }
+                    }
+                });
             }
         });
 
@@ -514,6 +555,8 @@ public class HttpToHttp2ConnectionHandlerTest {
         ChannelFuture ccf = cb.connect(serverChannel.localAddress());
         assertTrue(ccf.awaitUninterruptibly().isSuccess());
         clientChannel = ccf.channel();
+        assertTrue(prefaceWrittenLatch.await(5, SECONDS));
+        assertTrue(serverChannelLatch.await(WAIT_TIME_SECONDS, SECONDS));
     }
 
     private void verifyHeadersOnly(Http2Headers expected, ChannelPromise writePromise, ChannelFuture writeFuture)
